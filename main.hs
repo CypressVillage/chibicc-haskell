@@ -1,6 +1,7 @@
 import System.IO ( hPutStr, stderr )
 import System.Environment ( getArgs )
 import Data.Char ( isDigit )
+import Control.Arrow (ArrowChoice(right))
 
 data TokenKind = TK_PUNCT String
                | TK_NUM Int
@@ -54,23 +55,34 @@ tokenize input = tokenize' 1 input where
     tokenize' col []             = Right [Token TK_EOF (Position col col)]
     tokenize' col s@(x:xs)
         | x == ' '              = tokenize' (col+1) xs
-        | x `elem` punctuators  =
+        | isPunct x             =
             let pos = Position col col
-            in (Token (TK_PUNCT [x]) pos : ) <$> tokenize' (col+1) xs
+            in (Token (TK_PUNCT punct) pos : ) <$> tokenize' (col+1) npunct
         | isDigit x             =
             let pos = Position col (col+len-1)
-            in (Token (TK_NUM (read num)) pos : ) <$> tokenize' (col+len) other
+            in (Token (TK_NUM (read num)) pos : ) <$> tokenize' (col+len) nnum
         | otherwise             =
             let pos = Position col col
             in Left $ LexError "invalid token" input pos
-        where punctuators  = "+-*/()"
-              (num, other) = span isDigit s
-              len          = length num
+        where isPunct         = (`elem` "+-*/()<>=!")
+              (punct, npunct) = splitPunct s
+              splitPunct ('=':'=':n) = ("==", n)
+              splitPunct ('!':'=':n) = ("!=", n)
+              splitPunct ('>':'=':n) = (">=", n)
+              splitPunct ('<':'=':n) = ("<=", n)
+              splitPunct (punct  :n) = ([punct], n)
+              (num, nnum)     = span isDigit s
+              len             = length num
+              
 
 data NodeType = ND_ADD
               | ND_SUB
               | ND_MUL
               | ND_DIV
+              | ND_EQ
+              | ND_NE
+              | ND_LT
+              | ND_LE
               deriving (Show)
 
 data Node = ND_NUM Int
@@ -81,20 +93,62 @@ data Node = ND_NUM Int
             , rhs :: Node
             } deriving (Show)
 
--- expr = mul ("+" mul | "-" mul)*
+-- expr = equality
 parseExpr :: Code -> [Token] -> Either CompilerError (Node, [Token])
-parseExpr codes tokens = do
-    (left, tokens') <- parseMul codes tokens
-    parseExpr' left tokens'
+parseExpr = parseEquality
+
+-- equality = relational ("==" relational | "!=" relational)*
+parseEquality :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseEquality codes tokens = do
+    (left, tokens') <- parseRelational codes tokens
+    parseEquality' left tokens'
     where
-        parseExpr' left [] = Right (left, [])
-        parseExpr' left (tk:tks) = case tokenKind tk of
+        parseEquality' left [] = Right (left, [])
+        parseEquality' left (tk:tks) = case tokenKind tk of
+            TK_PUNCT "==" -> do
+                (right, tks') <- parseRelational codes tks
+                parseEquality' (Node ND_EQ left right) tks'
+            TK_PUNCT "!=" -> do
+                (right, tks') <- parseRelational codes tks
+                parseEquality' (Node ND_NE left right) tks'
+            _ -> Right (left, tk:tks)
+
+-- relational = add ("<" add | "<=" add | ">" add | ">=" add)*
+parseRelational :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseRelational codes tokens = do
+    (left, tokens') <- parseAdd codes tokens
+    parseRelational' left tokens'
+    where
+        parseRelational' left [] = Right (left, [])
+        parseRelational' left (tk:tks) = case tokenKind tk of
+            TK_PUNCT "<" -> do
+                (right, tks') <- parseAdd codes tks
+                parseRelational' (Node ND_LT left right) tks'
+            TK_PUNCT "<=" -> do
+                (right, tks') <- parseAdd codes tks
+                parseRelational' (Node ND_LE left right) tks'
+            TK_PUNCT ">" -> do
+                (right, tks') <- parseAdd codes tks
+                parseRelational' (Node ND_LT right left) tks'
+            TK_PUNCT ">=" -> do
+                (right, tks') <- parseAdd codes tks
+                parseRelational' (Node ND_LE right left) tks'
+            _ -> Right (left, tk:tks)
+
+-- add = mul ("+" mul | "-" mul)*
+parseAdd :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseAdd codes tokens = do
+    (left, tokens') <- parseMul codes tokens
+    parseAdd' left tokens'
+    where
+        parseAdd' left [] = Right (left, [])
+        parseAdd' left (tk:tks) = case tokenKind tk of
             TK_PUNCT "+" -> do
                 (right, tks') <- parseMul codes tks
-                parseExpr' (Node ND_ADD left right) tks'
+                parseAdd' (Node ND_ADD left right) tks'
             TK_PUNCT "-" -> do
                 (right, tks') <- parseMul codes tks
-                parseExpr' (Node ND_SUB left right) tks'
+                parseAdd' (Node ND_SUB left right) tks'
             _ -> Right (left, tk:tks)
 
 -- mul = unary ("*" unary | "/" unary)*
@@ -147,8 +201,20 @@ genExpr (Node ndType l r) = do
             ND_ADD -> "  add %rdi, %rax\n"
             ND_SUB -> "  sub %rdi, %rax\n"
             ND_MUL -> "  imul %rdi, %rax\n"
-            ND_DIV -> "  cqo\n" ++
+            ND_DIV -> "  cqo\n"             ++
                       "  idiv %rdi\n"
+            ND_EQ  -> "  cmp %rdi, %rax\n"  ++
+                      "  sete %al\n"        ++
+                      "  movzb %al, %rax\n"
+            ND_NE  -> "  cmp %rdi, %rax\n"  ++
+                      "  setne %al\n"       ++
+                      "  movzb %al, %rax\n"
+            ND_LT  -> "  cmp %rdi, %rax\n"  ++
+                      "  setl %al\n"        ++
+                      "  movzb %al, %rax\n"
+            ND_LE  -> "  cmp %rdi, %rax\n"  ++
+                      "  setle %al\n"       ++
+                      "  movzb %al, %rax\n"
     Right $ rCode ++
             "  push %rax\n" ++
             lCode ++
