@@ -74,6 +74,7 @@ data NodeType = ND_ADD
               deriving (Show)
 
 data Node = ND_NUM Int
+          | ND_NEG Node
           | Node
             { nodeType :: NodeType
             , lhs :: Node
@@ -96,21 +97,31 @@ parseExpr codes tokens = do
                 parseExpr' (Node ND_SUB left right) tks'
             _ -> Right (left, tk:tks)
 
--- mul = primary ("*" primary | "/" primary)*
+-- mul = unary ("*" unary | "/" unary)*
 parseMul :: Code -> [Token] -> Either CompilerError (Node, [Token])
 parseMul codes tokens = do
-    (left, tokens') <- parsePrimary codes tokens
+    (left, tokens') <- parseUnary codes tokens
     parseMul' left tokens'
     where
         parseMul' left [] = Right (left, [])
         parseMul' left (tk:tks) = case tokenKind tk of
             TK_PUNCT "*" -> do
-                (right, tks') <- parsePrimary codes tks
+                (right, tks') <- parseUnary codes tks
                 parseMul' (Node ND_MUL left right) tks'
             TK_PUNCT "/" -> do
-                (right, tks') <- parsePrimary codes tks
+                (right, tks') <- parseUnary codes tks
                 parseMul' (Node ND_DIV left right) tks'
             _ -> Right (left, tk:tks)
+
+-- unary = ("+" | "-") unary
+--       | primary
+parseUnary :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseUnary codes tokens@(tk:rest) = case tokenKind tk of
+    TK_PUNCT "+" -> parseUnary codes rest
+    TK_PUNCT "-" -> do
+        (right, tks) <- parseUnary codes rest
+        Right (ND_NEG right, tks)
+    _            -> parsePrimary codes tokens
 
 -- primary = "(" expr ")" | num
 parsePrimary :: Code -> [Token] -> Either CompilerError (Node, [Token])
@@ -128,6 +139,7 @@ parsePrimary codes (tk:rest) = case tokenKind tk of
 
 genExpr :: Node -> Either CompilerError String
 genExpr (ND_NUM n)        = Right $ "  mov $" ++ show n ++ ", %rax\n"
+genExpr (ND_NEG expr)     = (++ "  neg %rax\n") <$> genExpr expr
 genExpr (Node ndType l r) = do
     rCode <- genExpr r
     lCode <- genExpr l
