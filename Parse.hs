@@ -41,9 +41,22 @@ parseExprStmt codes tokens = do
                 Right (ND_EXPR_STMT left right, rest'')
             _            -> Left $ ParseError "expected ';' at the end of expression statement" codes (position tk)
 
--- expr = equality
+-- expr = assign
 parseExpr :: Code -> [Token] -> Either CompilerError (Node, [Token])
-parseExpr = parseEquality
+parseExpr = parseAssign
+
+-- assign = equality ("=" assign)?
+parseAssign :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseAssign codes tokens = do
+    (left, rest) <- parseEquality codes tokens
+    case rest of
+        [] -> Right (left, [])
+        (Token (TK_PUNCT "=") pos:rest') -> do
+            (right, rest'') <- parseAssign codes rest'
+            case left of
+                ND_VAR varName -> Right (ND_ASSIGN varName right, rest'')
+                _              -> Left $ ParseError "left-hand side of assignment must be a variable" codes pos
+        _ -> Right (left, rest)
 
 -- equality = relational ("==" relational | "!=" relational)*
 parseEquality :: Code -> [Token] -> Either CompilerError (Node, [Token])
@@ -85,7 +98,7 @@ parseUnary codes (tk:rest) = case tokenKind tk of
         Right (ND_NEG right, tks)
     _ -> parsePrimary codes (tk:rest)
 
--- primary = "(" expr ")" | num
+-- primary = "(" expr ")" | num | ident
 parsePrimary :: Code -> [Token] -> Either CompilerError (Node, [Token])
 parsePrimary codes (tk:rest) = case tokenKind tk of
     TK_PUNCT "(" -> case parseExpr codes rest of
@@ -97,5 +110,8 @@ parsePrimary codes (tk:rest) = case tokenKind tk of
 
     TK_NUM n ->
         Right (ND_NUM n, rest)
+
+    TK_IDENT ident ->
+        Right (ND_VAR ident, rest)
 
     other -> Right (ND_EMPTY, tk:rest)
