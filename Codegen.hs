@@ -3,9 +3,10 @@ module Codegen where
 import Types
 
 genExpr :: Node -> Either CompilerError String
+genExpr ND_EMPTY         = Right ""
 genExpr (ND_NUM n)        = Right $ "  mov $" ++ show n ++ ", %rax\n"
 genExpr (ND_NEG expr)     = (++ "  neg %rax\n") <$> genExpr expr
-genExpr (Node ndType l r) = do
+genExpr (ND_OP ndType l r) = do
     rCode <- genExpr r
     lCode <- genExpr l
     let opCode = case ndType of
@@ -31,3 +32,22 @@ genExpr (Node ndType l r) = do
             lCode ++
             "  pop %rdi\n" ++
             opCode
+
+genStmt :: Node -> Either CompilerError String
+genStmt ND_EMPTY = Right ""
+genStmt (ND_EXPR_STMT expr expr') = do
+    exprCode <- genExpr expr
+    restCode <- genStmt expr'
+    return $ exprCode ++ restCode
+
+codeGen :: Node -> Either CompilerError String
+codeGen node = do
+    let init = "  .globl main\n" ++
+               "main:\n"
+    stmtCode <- genStmt node
+    let last = "  ret\n"
+    return $ concat
+        [ init
+        , stmtCode
+        , last
+        ]

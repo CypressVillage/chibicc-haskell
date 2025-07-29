@@ -1,6 +1,45 @@
-module Parse ( parseExpr ) where
+module Parse ( parse ) where
 
 import Types
+
+parseLeftAssoc
+    :: (Code -> [Token] -> Either CompilerError (Node, [Token])) -- 子表达式解析器
+    -> [(String, Node -> Node -> Node)]                          -- 操作符列表
+    -> Code -> [Token] -> Either CompilerError (Node, [Token])
+parseLeftAssoc parseOp ops codes tokens = do
+    (left, tokens') <- parseOp codes tokens
+    parseLeftAssoc' left tokens'
+    where
+        parseLeftAssoc' left [] = Right (left, [])
+        parseLeftAssoc' left (tk:tks) = case tokenKind tk of
+            TK_PUNCT op -> case lookup op ops of
+                Just opFunc -> do
+                    (right, tks') <- parseOp codes tks
+                    parseLeftAssoc' (opFunc left right) tks'
+                Nothing -> Right (left, tk:tks)
+            _ -> Right (left, tk:tks)
+
+-- program = stmt*
+parse :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parse = parseStmt
+
+-- stmt = expr-stmt
+parseStmt :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseStmt = parseExprStmt
+
+-- expr-stmt = expr ";"
+parseExprStmt :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseExprStmt codes [] = Right (ND_EMPTY, [])
+parseExprStmt codes tokens = do
+    (left, rest) <- parseExpr codes tokens
+    case rest of
+        [] -> Left $ ParseError "expected ';' at the end of expression statement" codes (position $ last tokens)
+        [Token TK_EOF _] -> Right (ND_EXPR_STMT left ND_EMPTY, [])
+        (tk:rest') -> case tokenKind tk of
+            TK_PUNCT ";" -> do
+                (right, rest'') <- parseExprStmt codes rest'
+                Right (ND_EXPR_STMT left right, rest'')
+            _            -> Left $ ParseError "expected ';' at the end of expression statement" codes (position tk)
 
 -- expr = equality
 parseExpr :: Code -> [Token] -> Either CompilerError (Node, [Token])
@@ -8,83 +47,43 @@ parseExpr = parseEquality
 
 -- equality = relational ("==" relational | "!=" relational)*
 parseEquality :: Code -> [Token] -> Either CompilerError (Node, [Token])
-parseEquality codes tokens = do
-    (left, tokens') <- parseRelational codes tokens
-    parseEquality' left tokens'
-    where
-        parseEquality' left [] = Right (left, [])
-        parseEquality' left (tk:tks) = case tokenKind tk of
-            TK_PUNCT "==" -> do
-                (right, tks') <- parseRelational codes tks
-                parseEquality' (Node ND_EQ left right) tks'
-            TK_PUNCT "!=" -> do
-                (right, tks') <- parseRelational codes tks
-                parseEquality' (Node ND_NE left right) tks'
-            _ -> Right (left, tk:tks)
+parseEquality = parseLeftAssoc parseRelational
+    [ ("==", ND_OP ND_EQ)
+    , ("!=", ND_OP ND_NE)
+    ]
 
 -- relational = add ("<" add | "<=" add | ">" add | ">=" add)*
 parseRelational :: Code -> [Token] -> Either CompilerError (Node, [Token])
-parseRelational codes tokens = do
-    (left, tokens') <- parseAdd codes tokens
-    parseRelational' left tokens'
-    where
-        parseRelational' left [] = Right (left, [])
-        parseRelational' left (tk:tks) = case tokenKind tk of
-            TK_PUNCT "<" -> do
-                (right, tks') <- parseAdd codes tks
-                parseRelational' (Node ND_LT left right) tks'
-            TK_PUNCT "<=" -> do
-                (right, tks') <- parseAdd codes tks
-                parseRelational' (Node ND_LE left right) tks'
-            TK_PUNCT ">" -> do
-                (right, tks') <- parseAdd codes tks
-                parseRelational' (Node ND_LT right left) tks'
-            TK_PUNCT ">=" -> do
-                (right, tks') <- parseAdd codes tks
-                parseRelational' (Node ND_LE right left) tks'
-            _ -> Right (left, tk:tks)
+parseRelational = parseLeftAssoc parseAdd
+    [ ("<", ND_OP ND_LT)
+    , ("<=", ND_OP ND_LE)
+    , (">", flip $ ND_OP ND_LT)
+    , (">=", flip $ ND_OP ND_LE)
+    ]
 
 -- add = mul ("+" mul | "-" mul)*
 parseAdd :: Code -> [Token] -> Either CompilerError (Node, [Token])
-parseAdd codes tokens = do
-    (left, tokens') <- parseMul codes tokens
-    parseAdd' left tokens'
-    where
-        parseAdd' left [] = Right (left, [])
-        parseAdd' left (tk:tks) = case tokenKind tk of
-            TK_PUNCT "+" -> do
-                (right, tks') <- parseMul codes tks
-                parseAdd' (Node ND_ADD left right) tks'
-            TK_PUNCT "-" -> do
-                (right, tks') <- parseMul codes tks
-                parseAdd' (Node ND_SUB left right) tks'
-            _ -> Right (left, tk:tks)
+parseAdd = parseLeftAssoc parseMul
+    [ ("+", ND_OP ND_ADD)
+    , ("-", ND_OP ND_SUB)
+    ]
 
 -- mul = unary ("*" unary | "/" unary)*
 parseMul :: Code -> [Token] -> Either CompilerError (Node, [Token])
-parseMul codes tokens = do
-    (left, tokens') <- parseUnary codes tokens
-    parseMul' left tokens'
-    where
-        parseMul' left [] = Right (left, [])
-        parseMul' left (tk:tks) = case tokenKind tk of
-            TK_PUNCT "*" -> do
-                (right, tks') <- parseUnary codes tks
-                parseMul' (Node ND_MUL left right) tks'
-            TK_PUNCT "/" -> do
-                (right, tks') <- parseUnary codes tks
-                parseMul' (Node ND_DIV left right) tks'
-            _ -> Right (left, tk:tks)
+parseMul = parseLeftAssoc parseUnary
+    [ ("*", ND_OP ND_MUL)
+    , ("/", ND_OP ND_DIV)
+    ]
 
 -- unary = ("+" | "-") unary
 --       | primary
 parseUnary :: Code -> [Token] -> Either CompilerError (Node, [Token])
-parseUnary codes tokens@(tk:rest) = case tokenKind tk of
+parseUnary codes (tk:rest) = case tokenKind tk of
     TK_PUNCT "+" -> parseUnary codes rest
     TK_PUNCT "-" -> do
         (right, tks) <- parseUnary codes rest
         Right (ND_NEG right, tks)
-    _            -> parsePrimary codes tokens
+    _ -> parsePrimary codes (tk:rest)
 
 -- primary = "(" expr ")" | num
 parsePrimary :: Code -> [Token] -> Either CompilerError (Node, [Token])
@@ -93,10 +92,10 @@ parsePrimary codes (tk:rest) = case tokenKind tk of
         Left e -> Left e
         Right (node, rParen:rest) -> case tokenKind rParen of
             TK_PUNCT ")" -> Right (node, rest)
-            _            -> Left $ ParseError "expected ')'" codes  (position rParen)
+            _            -> Left $ ParseError "expected ')'" codes (position rParen)
+        Right (node, []) -> Left $ ParseError "expected ')'" codes (position $ last rest)
 
     TK_NUM n ->
         Right (ND_NUM n, rest)
 
-    _ -> Left $ ParseError "expected an expression" codes (position tk)
-
+    other -> Right (ND_EMPTY, tk:rest)

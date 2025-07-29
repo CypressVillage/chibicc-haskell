@@ -23,20 +23,21 @@ data Token = Token
     } deriving (Show)
 
 -- AST
-data NodeType = ND_ADD
-              | ND_SUB
-              | ND_MUL
-              | ND_DIV
-              | ND_EQ
-              | ND_NE
-              | ND_LT
-              | ND_LE
+data NodeType = ND_ADD -- +
+              | ND_SUB -- -
+              | ND_MUL -- *
+              | ND_DIV -- /
+              | ND_EQ  -- ==
+              | ND_NE  -- !=
+              | ND_LT  -- <
+              | ND_LE  -- <=
               deriving (Show)
 
-data Node = ND_NUM Int
+data Node = ND_EMPTY
+          | ND_NUM Int
           | ND_NEG Node
-          | Node
-            { nodeType :: NodeType
-            , lhs :: Node
-            , rhs :: Node
-            } deriving (Show)
+          | ND_EXPR_STMT Node Node
+          | ND_OP { nodeType :: NodeType
+                  , lhs :: Node
+                  , rhs :: Node
+                  } deriving (Show)
