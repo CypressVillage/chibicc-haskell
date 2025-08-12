@@ -52,6 +52,10 @@ genStmt (ND_EXPR_STMT expr expr') = do
     exprCode <- genExpr expr
     restCode <- genStmt expr'
     return $ exprCode ++ restCode
+genStmt (ND_RETURN expr expr') = do
+    exprCode <- genExpr expr
+    restCode <- genStmt expr'
+    return $ exprCode ++ "  jmp .L.return\n" ++ restCode
 
 genAddr :: Node -> Either CompilerError String
 genAddr (ND_VAR ident) = Right $ "  lea " ++ show (-offset ident) ++ "(%rbp), %rax\n"
@@ -76,6 +80,7 @@ codeGen func = do
         , prologue
         , stackInit
         , stmtCode
+        , ".L.return:\n"
         , epilogue
         , last
         ]

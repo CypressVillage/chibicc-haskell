@@ -6,10 +6,11 @@ data CompilerError = LexError String Code Position
                    | ParseError String Code Position
                    deriving (Show)
 
-data TokenKind = TK_PUNCT String -- keywords or punctuators
-               | TK_IDENT String -- identifiers
-               | TK_NUM Int      -- numbers
-               | TK_EOF          -- end of file
+data TokenKind = TK_PUNCT String   -- keywords or punctuators
+               | TK_IDENT String   -- identifiers
+               | TK_KEYWORD String -- keywords
+               | TK_NUM Int        -- numbers
+               | TK_EOF            -- end of file
                deriving (Show)
 
 -- Token
@@ -43,6 +44,7 @@ data Node = ND_EMPTY
                   , rhs :: Node
                   }
           | ND_ASSIGN LocalVal Node
+          | ND_RETURN Node Node
           | ND_VAR LocalVal
     deriving (Show)
 

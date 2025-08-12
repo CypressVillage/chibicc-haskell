@@ -48,9 +48,21 @@ parseLeftAssoc parseOp ops tokens = do
 parse :: Parser Node
 parse = parseStmt
 
--- stmt = expr-stmt
+-- stmt = "return" expr ";"
+--      | expr-stmt
 parseStmt :: Parser Node
-parseStmt = parseExprStmt
+parseStmt (tk:tks) = case tokenKind tk of
+    TK_KEYWORD "return" -> do
+        codes <- ask
+        (left, rest) <- parseExpr tks
+        case rest of
+            [] -> throwError $ ParseError "expected ';' at the end of expression statement" codes (position $ last tks)
+            (tk':rest') -> case tokenKind tk' of
+                TK_PUNCT ";" -> do
+                    (right, rest'') <- parseStmt rest'
+                    return (ND_RETURN left right, rest'')
+
+    _ -> parseExprStmt (tk:tks)
 
 -- expr-stmt = expr ";"
 parseExprStmt :: Parser Node
@@ -60,11 +72,10 @@ parseExprStmt tokens = do
     (left, rest) <- parseExpr tokens
     case rest of
         [] -> throwError $ ParseError "expected ';' at the end of expression statement" codes (position $ last tokens)
-        -- [] -> throw $ ParseError "expected ';' at the end of expression statement" codes (position $ last tokens)
         [Token TK_EOF _] -> return (ND_EXPR_STMT left ND_EMPTY, [])
         (tk:rest') -> case tokenKind tk of
             TK_PUNCT ";" -> do
-                (right, rest'') <- parseExprStmt rest'
+                (right, rest'') <- parseStmt rest' -- when current stmt ok, gen next stmt
                 return (ND_EXPR_STMT left right, rest'')
             _            -> throwError $ ParseError "expected ';' at the end of expression statement" codes (position tk)
 
