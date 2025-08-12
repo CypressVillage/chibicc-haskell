@@ -3,6 +3,9 @@ module Codegen where
 import Types
 import Data.Char ( ord )
 
+alignTo :: Int -> Int -> Int
+alignTo align n = (n + align - 1) `div` align * align
+
 genExpr :: Node -> Either CompilerError String
 genExpr ND_EMPTY         = Right ""
 genExpr (ND_NUM n)        = Right $ "  mov $" ++ show n ++ ", %rax\n"
@@ -51,17 +54,19 @@ genStmt (ND_EXPR_STMT expr expr') = do
     return $ exprCode ++ restCode
 
 genAddr :: Node -> Either CompilerError String
-genAddr (ND_VAR ident) = Right $ "  lea " ++ show (ident' ident) ++ "(%rbp), %rax\n"
-    where ident' (x:_) = - ((ord x - ord 'a' + 1) * 8)
-          ident' _     = 0
+genAddr (ND_VAR ident) = Right $ "  lea " ++ show (-offset ident) ++ "(%rbp), %rax\n"
 genAddr _ = Left $ LexError "expected variable" "" (Position 0 0)
 
-codeGen :: Node -> Either CompilerError String
-codeGen node = do
+codeGen :: Function -> Either CompilerError String
+codeGen func = do
+    let node = body func
+    let size = alignTo 16 $ stackSize func
+
     let init = "  .globl main\n" ++
                "main:\n"
     let prologue = "  push %rbp\n" ++
                    "  mov %rsp, %rbp\n"
+    let stackInit = "  sub $" ++ show size ++ ", %rsp\n"  -- Allocate space for local variables
     stmtCode <- genStmt node
     let epilogue = "  mov %rbp, %rsp\n" ++ -- Restore stack pointer
                    "  pop %rbp\n"
@@ -69,7 +74,7 @@ codeGen node = do
     return $ concat
         [ init
         , prologue
-        , "  sub $208, %rsp\n"  -- Allocate space for local variables
+        , stackInit
         , stmtCode
         , epilogue
         , last

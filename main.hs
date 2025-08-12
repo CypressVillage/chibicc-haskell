@@ -1,9 +1,9 @@
 import System.Environment ( getArgs )
 
-import Types ( CompilerError )
+import Types
 import Errorhandle ( handleError )
 import Tokenize ( tokenize )
-import Parse ( parse )
+import Parse ( parse, runParser )
 import Codegen ( codeGen )
 
 main :: IO ()
@@ -13,5 +13,5 @@ compile :: [String] -> IO (Either CompilerError String)
 compile []    = return $ Right ""
 compile (codes:_) = pure $ do
     tokens <- tokenize codes
-    ast    <- parse codes tokens
-    codeGen $ fst ast
+    ast    <- runParser parse tokens codes
+    codeGen ast

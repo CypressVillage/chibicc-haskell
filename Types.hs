@@ -42,6 +42,20 @@ data Node = ND_EMPTY
                   , lhs :: Node
                   , rhs :: Node
                   }
-          | ND_ASSIGN String Node
-          | ND_VAR String
+          | ND_ASSIGN LocalVal Node
+          | ND_VAR LocalVal
     deriving (Show)
+
+-- Local Variable
+data LocalVal = LocalVal
+    { name :: String
+    , offset :: Int
+    }
+    deriving (Show)
+
+-- Function
+data Function = Function
+    { body :: Node
+    , localVars :: [LocalVal]
+    , stackSize :: Int
+    } deriving (Show)

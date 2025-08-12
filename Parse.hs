@@ -1,72 +1,100 @@
-module Parse ( parse ) where
+module Parse ( parse, runParser ) where
 
 import Types
+import Control.Monad.State
+import Control.Monad.Reader
+import Control.Monad.Except
+import Control.Monad.Identity (Identity (runIdentity))
+import Data.List ( findIndex )
+
+type ParserEnv a = ReaderT Code (ExceptT CompilerError (StateT [LocalVal] Identity)) a
+type Parser a = [Token] -> ParserEnv (a, [Token])
+
+runParser :: Parser Node -> [Token]
+    -> Code
+    -> Either CompilerError Function
+runParser p tokens code = do
+    let (parserRtn, localVals) = runIdentity
+            $ flip runStateT []
+            $ runExceptT
+            $ flip runReaderT code
+            $ p tokens
+    case parserRtn of
+        Left err -> Left err
+        Right result -> do
+            let size = case localVals of
+                    [] -> 0
+                    _ -> offset $ head localVals
+            return $ Function (fst result) localVals size
 
 parseLeftAssoc
-    :: (Code -> [Token] -> Either CompilerError (Node, [Token])) -- 子表达式解析器
-    -> [(String, Node -> Node -> Node)]                          -- 操作符列表
-    -> Code -> [Token] -> Either CompilerError (Node, [Token])
-parseLeftAssoc parseOp ops codes tokens = do
-    (left, tokens') <- parseOp codes tokens
+    :: Parser Node -- 子表达式解析器
+    -> [(String, Node -> Node -> Node)] -- 操作符列表
+    -> Parser Node
+parseLeftAssoc parseOp ops tokens = do
+    (left, tokens') <- parseOp tokens
     parseLeftAssoc' left tokens'
     where
-        parseLeftAssoc' left [] = Right (left, [])
+        parseLeftAssoc' left [] = return (left, [])
         parseLeftAssoc' left (tk:tks) = case tokenKind tk of
             TK_PUNCT op -> case lookup op ops of
                 Just opFunc -> do
-                    (right, tks') <- parseOp codes tks
+                    (right, tks') <- parseOp tks
                     parseLeftAssoc' (opFunc left right) tks'
-                Nothing -> Right (left, tk:tks)
-            _ -> Right (left, tk:tks)
+                Nothing -> return (left, tk:tks)
+            _ -> return (left, tk:tks)
 
 -- program = stmt*
-parse :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parse :: Parser Node
 parse = parseStmt
 
 -- stmt = expr-stmt
-parseStmt :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseStmt :: Parser Node
 parseStmt = parseExprStmt
 
 -- expr-stmt = expr ";"
-parseExprStmt :: Code -> [Token] -> Either CompilerError (Node, [Token])
-parseExprStmt codes [] = Right (ND_EMPTY, [])
-parseExprStmt codes tokens = do
-    (left, rest) <- parseExpr codes tokens
+parseExprStmt :: Parser Node
+parseExprStmt [] = return (ND_EMPTY, [])
+parseExprStmt tokens = do
+    codes <- ask
+    (left, rest) <- parseExpr tokens
     case rest of
-        [] -> Left $ ParseError "expected ';' at the end of expression statement" codes (position $ last tokens)
-        [Token TK_EOF _] -> Right (ND_EXPR_STMT left ND_EMPTY, [])
+        [] -> throwError $ ParseError "expected ';' at the end of expression statement" codes (position $ last tokens)
+        -- [] -> throw $ ParseError "expected ';' at the end of expression statement" codes (position $ last tokens)
+        [Token TK_EOF _] -> return (ND_EXPR_STMT left ND_EMPTY, [])
         (tk:rest') -> case tokenKind tk of
             TK_PUNCT ";" -> do
-                (right, rest'') <- parseExprStmt codes rest'
-                Right (ND_EXPR_STMT left right, rest'')
-            _            -> Left $ ParseError "expected ';' at the end of expression statement" codes (position tk)
+                (right, rest'') <- parseExprStmt rest'
+                return (ND_EXPR_STMT left right, rest'')
+            _            -> throwError $ ParseError "expected ';' at the end of expression statement" codes (position tk)
 
 -- expr = assign
-parseExpr :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseExpr :: Parser Node
 parseExpr = parseAssign
 
 -- assign = equality ("=" assign)?
-parseAssign :: Code -> [Token] -> Either CompilerError (Node, [Token])
-parseAssign codes tokens = do
-    (left, rest) <- parseEquality codes tokens
+parseAssign :: Parser Node
+parseAssign tokens = do
+    codes <- ask
+    (left, rest) <- parseEquality tokens
     case rest of
-        [] -> Right (left, [])
+        [] -> return (left, [])
         (Token (TK_PUNCT "=") pos:rest') -> do
-            (right, rest'') <- parseAssign codes rest'
+            (right, rest'') <- parseAssign rest'
             case left of
-                ND_VAR varName -> Right (ND_ASSIGN varName right, rest'')
-                _              -> Left $ ParseError "left-hand side of assignment must be a variable" codes pos
-        _ -> Right (left, rest)
+                ND_VAR var -> return (ND_ASSIGN var right, rest'')
+                _              -> throwError $ ParseError "left-hand side of assignment must be a variable" codes pos
+        _ -> return (left, rest)
 
 -- equality = relational ("==" relational | "!=" relational)*
-parseEquality :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseEquality :: Parser Node
 parseEquality = parseLeftAssoc parseRelational
     [ ("==", ND_OP ND_EQ)
     , ("!=", ND_OP ND_NE)
     ]
 
 -- relational = add ("<" add | "<=" add | ">" add | ">=" add)*
-parseRelational :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseRelational :: Parser Node
 parseRelational = parseLeftAssoc parseAdd
     [ ("<", ND_OP ND_LT)
     , ("<=", ND_OP ND_LE)
@@ -75,14 +103,14 @@ parseRelational = parseLeftAssoc parseAdd
     ]
 
 -- add = mul ("+" mul | "-" mul)*
-parseAdd :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseAdd :: Parser Node
 parseAdd = parseLeftAssoc parseMul
     [ ("+", ND_OP ND_ADD)
     , ("-", ND_OP ND_SUB)
     ]
 
 -- mul = unary ("*" unary | "/" unary)*
-parseMul :: Code -> [Token] -> Either CompilerError (Node, [Token])
+parseMul :: Parser Node
 parseMul = parseLeftAssoc parseUnary
     [ ("*", ND_OP ND_MUL)
     , ("/", ND_OP ND_DIV)
@@ -90,28 +118,38 @@ parseMul = parseLeftAssoc parseUnary
 
 -- unary = ("+" | "-") unary
 --       | primary
-parseUnary :: Code -> [Token] -> Either CompilerError (Node, [Token])
-parseUnary codes (tk:rest) = case tokenKind tk of
-    TK_PUNCT "+" -> parseUnary codes rest
+parseUnary :: Parser Node
+parseUnary (tk:rest) = case tokenKind tk of
+    TK_PUNCT "+" -> parseUnary rest
     TK_PUNCT "-" -> do
-        (right, tks) <- parseUnary codes rest
-        Right (ND_NEG right, tks)
-    _ -> parsePrimary codes (tk:rest)
+        (right, tks) <- parseUnary rest
+        return (ND_NEG right, tks)
+    _ -> parsePrimary (tk:rest)
 
 -- primary = "(" expr ")" | num | ident
-parsePrimary :: Code -> [Token] -> Either CompilerError (Node, [Token])
-parsePrimary codes (tk:rest) = case tokenKind tk of
-    TK_PUNCT "(" -> case parseExpr codes rest of
-        Left e -> Left e
-        Right (node, rParen:rest) -> case tokenKind rParen of
-            TK_PUNCT ")" -> Right (node, rest)
-            _            -> Left $ ParseError "expected ')'" codes (position rParen)
-        Right (node, []) -> Left $ ParseError "expected ')'" codes (position $ last rest)
-
-    TK_NUM n ->
-        Right (ND_NUM n, rest)
-
-    TK_IDENT ident ->
-        Right (ND_VAR ident, rest)
-
-    other -> Right (ND_EMPTY, tk:rest)
+parsePrimary :: Parser Node
+parsePrimary (tk:rest) = do
+    codes <- ask
+    case tokenKind tk of
+        TK_PUNCT "(" -> do
+            (node, tokens') <- parseExpr rest
+            case tokens' of
+                (rParen:rest') ->
+                    case tokenKind rParen of
+                        TK_PUNCT ")" -> return (node, rest')
+                        _            -> throwError $ ParseError "expected ')'" codes (position rParen)
+                [] -> throwError $ ParseError "expected ')'" codes (position $ last rest)
+        TK_NUM n ->
+            return (ND_NUM n, rest)
+        TK_IDENT ident -> do
+            localVals <- get
+            case findIndex (\v -> name v == ident) localVals of
+                Just idx ->
+                    return (ND_VAR (localVals !! idx), rest)
+                Nothing -> do
+                    let offset' = 8 + sum (map offset localVals)
+                    let val = LocalVal ident offset'
+                    put (val : localVals)
+                    return (ND_VAR val, rest)
+        _ ->
+            return (ND_EMPTY, tk:rest)
