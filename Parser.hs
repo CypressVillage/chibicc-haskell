@@ -1,61 +1,15 @@
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Use lambda-case" #-}
-import System.IO ( hPutStr, stderr )
-import System.Environment ( getArgs )
-import Data.Char ( isDigit )
+module Parser (parse) where
+
 import Data.Functor (($>))
 import Control.Monad (void)
 import Control.Monad.Except (Except, ExceptT, throwError, catchError, runExceptT)
 import Control.Monad.Identity (Identity (runIdentity))
 import Control.Monad.Reader (ReaderT (runReaderT), runReaderT, ask)
 import Control.Applicative (Alternative (many), empty, (<|>))
+import CompilerData
 
-data CompilerError = LexError String Code Position
-                   | ParseError String Code Position
-                   deriving (Show)
-
-data Token 
-    = TK_PUNCT String
-    | TK_NUM Int
-    | TK_EOF
-    deriving (Show, Eq)
-
-data Position = Position
-    { startCol :: Int
-    , endCol   :: Int
-    } deriving (Show)
-
-data PosToken = PosToken
-    { token    :: Token
-    , position :: Position
-    } deriving (Show)
-
-tokenize :: String -> Either CompilerError [PosToken]
-tokenize input = tokenize' 1 input where
-    tokenize' :: Int -> String -> Either CompilerError [PosToken]
-    tokenize' col []             = Right [PosToken TK_EOF (Position col col)]
-    tokenize' col s@(x:xs)
-        | x == ' '              = tokenize' (col+1) xs
-        | isPunct x             =
-            let pos = Position col col
-            in (PosToken (TK_PUNCT punct) pos : ) <$> tokenize' (col+1) npunct
-        | isDigit x             =
-            let pos = Position col (col+len-1)
-            in (PosToken (TK_NUM (read num)) pos : ) <$> tokenize' (col+len) nnum
-        | otherwise             =
-            let pos = Position col col
-            in Left $ LexError "invalid token" input pos
-        where isPunct         = (`elem` "+-*/()<>=!")
-              (punct, npunct) = splitPunct s
-              splitPunct ('=':'=':n) = ("==", n)
-              splitPunct ('!':'=':n) = ("!=", n)
-              splitPunct ('>':'=':n) = (">=", n)
-              splitPunct ('<':'=':n) = ("<=", n)
-              splitPunct (punct  :n) = ([punct], n)
-              (num, nnum)     = span isDigit s
-              len             = length num
-
-type Code = String
 type ParserEnv a = ReaderT Code (ExceptT CompilerError Identity) a
 newtype Parser a = Parser { runParser :: [PosToken] -> ParserEnv (a, [PosToken]) }
 
@@ -172,19 +126,6 @@ chainl1 p op = do
             rest (f x y)
             <|> return x
 
--- AST
-data Expr
-    = IntLit Int
-    | BinOp BinOp Expr Expr
-    | UnaryOp UnaryOp Expr
-    deriving (Show, Eq)
-
-data BinOp = Add | Sub | Mul | Div
-           | Eq | Ne | Lt | Le
-    deriving (Show, Eq)
-
-data UnaryOp = Neg | Pos
-    deriving (Show, Eq)
 
 program :: Parser Expr
 program = do
@@ -242,8 +183,8 @@ primary = between (punct "(") (punct ")") expr
 intLit :: Parser Expr
 intLit = IntLit <$> integer
 
-parse :: [PosToken] -> Code -> Either CompilerError Expr
-parse tokens codes = do
+parse :: Code -> [PosToken] -> Either CompilerError Expr
+parse codes tokens = do
     let parseResult = 
             runIdentity $ 
             runExceptT $ 
@@ -252,70 +193,3 @@ parse tokens codes = do
     case parseResult of
         Right (exp, []) -> return exp
         Left e -> Left e
-
-genExpr :: Expr -> Either CompilerError String
-genExpr (IntLit n) = return $ "  mov $" ++ show n ++ ", %rax\n"
-genExpr (BinOp op e1 e2) = do
-    asm1 <- genExpr e1
-    asm2 <- genExpr e2
-    let opStr = case op of
-            Add -> "  add %rdi, %rax\n"
-            Sub -> "  sub %rdi, %rax\n"
-            Mul -> "  imul %rdi, %rax\n"
-            Div -> "  cqo\n"             ++
-                   "  idiv %rdi\n"
-            Eq ->  "  cmp %rdi, %rax\n"  ++
-                   "  sete %al\n"        ++
-                   "  movzb %al, %rax\n"
-            Ne ->  "  cmp %rdi, %rax\n"  ++
-                   "  setne %al\n"       ++
-                   "  movzb %al, %rax\n"
-            Lt ->  "  cmp %rdi, %rax\n"  ++
-                   "  setl %al\n"        ++
-                   "  movzb %al, %rax\n"
-            Le ->  "  cmp %rdi, %rax\n"  ++
-                   "  setle %al\n"       ++
-                   "  movzb %al, %rax\n"
-    return $
-        asm2 ++
-        push ++
-        asm1 ++
-        pop ++
-        opStr
-genExpr (UnaryOp Neg e) = do
-    asm <- genExpr e
-    return $ asm ++ "  neg %rax\n"
-genExpr (UnaryOp Pos e) = genExpr e
-
-push :: String
-push = "  push %rax\n"
-
-pop :: String
-pop = "  pop %rdi\n"
-
-main :: IO ()
-main = getArgs >>= compile >>= either handleError putStr
-
-handleError :: CompilerError -> IO ()
-handleError (LexError msg expr pos) =
-    hPutStr stderr $ formatError msg expr pos
-handleError (ParseError msg expr pos) =
-    hPutStr stderr $ formatError msg expr pos
-
-formatError :: String -> Code -> Position -> String
-formatError msg expr pos = unlines
-    [ expr
-    , replicate (startCol pos - 1) ' ' ++ "^ " ++ msg
-    ]
-
-compile :: [String] -> IO (Either CompilerError String)
-compile []    = return $ Right ""
-compile (codes:_) = return $ do
-    tokens <- tokenize codes
-    ast    <- parse tokens codes
-    asm    <- genExpr ast
-    return $
-        "  .globl main\n" ++
-        "main:\n" ++
-        asm ++
-        "  ret\n"
