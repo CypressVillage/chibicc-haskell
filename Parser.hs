@@ -126,12 +126,17 @@ chainl1 p op = do
             rest (f x y)
             <|> return x
 
+-- program = stmt* eof
+program :: Parser [Stmt]
+program = many stmt <* skip TK_EOF
 
-program :: Parser Expr
-program = do
-    ast <- expr
-    skip TK_EOF
-    return ast
+-- stmt = exprStmt
+stmt :: Parser Stmt
+stmt = exprStmt
+
+-- exprStmt = expr ";"
+exprStmt :: Parser Stmt
+exprStmt = ExprStmt <$> expr <* punct ";"
 
 -- expr = equality
 expr :: Parser Expr
@@ -183,7 +188,7 @@ primary = between (punct "(") (punct ")") expr
 intLit :: Parser Expr
 intLit = IntLit <$> integer
 
-parse :: Code -> [PosToken] -> Either CompilerError Expr
+parse :: Code -> [PosToken] -> Either CompilerError [Stmt]
 parse codes tokens = do
     let parseResult = 
             runIdentity $ 

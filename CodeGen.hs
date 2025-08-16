@@ -46,8 +46,10 @@ genExpr (UnaryOp Neg e) = do
     return $ asm ++ "  neg %rax\n"
 genExpr (UnaryOp Pos e) = genExpr e
 
-genCode :: Expr -> Either CompilerError String
-genCode expr = do
-    asm <- genExpr expr
-    return $ prologue ++ asm ++ epilogue
+genStmt :: Stmt -> Either CompilerError String
+genStmt (ExprStmt expr) = genExpr expr
 
+genCode :: [Stmt] -> Either CompilerError String
+genCode ast = do
+    asms <- mapM genStmt ast
+    return $ prologue ++ concat asms ++ epilogue

@@ -37,3 +37,6 @@ data BinOp = Add | Sub | Mul | Div
 
 data UnaryOp = Neg | Pos
     deriving (Show, Eq)
+
+data Stmt = ExprStmt Expr
+    deriving (Show, Eq)
