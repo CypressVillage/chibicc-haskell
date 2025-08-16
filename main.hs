@@ -170,9 +170,13 @@ chainl1 p op = do
 data Expr
     = IntLit Int
     | BinOp BinOp Expr Expr
+    | UnaryOp UnaryOp Expr
     deriving (Show, Eq)
 
 data BinOp = Add | Sub | Mul | Div
+    deriving (Show, Eq)
+
+data UnaryOp = Neg | Pos
     deriving (Show, Eq)
 
 program :: Parser Expr
@@ -188,12 +192,19 @@ expr = chainl1 mul (addOp <|> subOp)
         addOp = punct "+" $> BinOp Add
         subOp = punct "-" $> BinOp Sub
 
--- mul = primary ("*" primary | "/" primary)*
+-- mul = unary ("*" unary | "/" unary)*
 mul :: Parser Expr
-mul = chainl1 primary (mulOp <|> divOp)
+mul = chainl1 unary (mulOp <|> divOp)
     where
         mulOp = punct "*" $> BinOp Mul
         divOp = punct "/" $> BinOp Div
+
+-- unary = ("+" | "-") unary
+--       | primary
+unary :: Parser Expr
+unary = (UnaryOp Neg <$> (punct "-" *> unary))
+    <|> (UnaryOp Pos <$> (punct "+" *> unary))
+    <|> primary
 
 -- primary = "(" expr ")" | num
 primary :: Parser Expr
@@ -232,6 +243,10 @@ genExpr (BinOp op e1 e2) = do
         asm1 ++
         pop ++
         opStr
+genExpr (UnaryOp Neg e) = do
+    asm <- genExpr e
+    return $ asm ++ "  neg %rax\n"
+genExpr (UnaryOp Pos e) = genExpr e
 
 push :: String
 push = "  push %rax\n"
