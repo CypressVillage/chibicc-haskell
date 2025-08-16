@@ -12,6 +12,7 @@ data Token
     = TK_PUNCT String
     | TK_IDENT String
     | TK_NUM Int
+    | TK_KEYWORD String
     | TK_EOF
     deriving (Show, Eq)
 
@@ -47,6 +48,7 @@ data LocalVal = LocalVal
     } deriving (Show, Eq)
 
 data Stmt = ExprStmt Expr
+          | ReturnStmt Expr
     deriving (Show, Eq)
 
 data Function = Function

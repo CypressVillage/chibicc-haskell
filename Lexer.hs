@@ -18,7 +18,11 @@ tokenize input = tokenize' 1 input where
         | isIdent1 x            =
             let (ident, nident) = span isIdent2 s
                 pos = Position col (col + length ident - 1)
-            in (PosToken (TK_IDENT ident) pos : ) <$> tokenize' (col + length ident) nident
+            in case ident of
+                "return" ->
+                    (PosToken (TK_KEYWORD "return") pos : ) <$> tokenize' (col + length ident) nident
+                _ -> 
+                    (PosToken (TK_IDENT ident) pos : ) <$> tokenize' (col + length ident) nident
         | otherwise              =
             let pos = Position col col
             in Left $ LexError "invalid token" input pos

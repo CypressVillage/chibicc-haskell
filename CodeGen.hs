@@ -13,7 +13,8 @@ prologue = "  .globl main\n"    ++
            "  mov %rsp, %rbp\n"
 
 epilogue :: String
-epilogue = "  mov %rbp, %rsp\n" ++ -- Restore stack pointer
+epilogue = ".L.return:\n"       ++
+           "  mov %rbp, %rsp\n" ++ -- Restore stack pointer
            "  pop %rbp\n"       ++
            "  ret\n"
 
@@ -66,6 +67,9 @@ genExpr (Assign var e) = do
 
 genStmt :: Stmt -> Either CompilerError String
 genStmt (ExprStmt expr) = genExpr expr
+genStmt (ReturnStmt expr) = do
+    asm <- genExpr expr
+    return $ asm ++ "  jmp .L.return\n"
 
 genAddr :: LocalVal -> Either CompilerError String
 genAddr (LocalVal _ off) = Right $ "  lea " ++ show (-off) ++ "(%rbp), %rax\n"

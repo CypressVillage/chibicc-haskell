@@ -132,6 +132,9 @@ identity = do
         isIdent (TK_IDENT _) = True
         isIdent _            = False
 
+keyword :: String -> Parser ()
+keyword s = satisfy (== TK_KEYWORD s) $> ()
+
 between :: Parser open -> Parser close -> Parser a -> Parser a
 between open close p = open *> p <* close
 
@@ -152,9 +155,11 @@ chainl1 p op = do
 program :: Parser [Stmt]
 program = many stmt <* eof
 
--- stmt = exprStmt
+-- stmt = "return" expr ";"
+--      | exprStmt
 stmt :: Parser Stmt
-stmt = exprStmt
+stmt = ReturnStmt <$> (keyword "return" *> expr <* punct ";")
+   <|> exprStmt
 
 -- exprStmt = expr ";"
 exprStmt :: Parser Stmt
