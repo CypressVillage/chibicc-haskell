@@ -94,14 +94,10 @@ skip expected = do
         else throwParserError $ "Expected token: " ++ show expected
 
 punct :: String -> Parser ()
-punct s = do
-    tk <- satisfy isPunct
-    case tk of
-        TK_PUNCT p | p == s -> return ()
-        _                   -> throwParserError $ "Expected punctuation: " ++ s
-    where
-        isPunct (TK_PUNCT _) = True
-        isPunct _            = False
+punct s = satisfy (== TK_PUNCT s) $> ()
+
+eof :: Parser ()
+eof = skip TK_EOF
 
 integer :: Parser Int
 integer = do
@@ -113,8 +109,21 @@ integer = do
         isNum (TK_NUM _) = True
         isNum _          = False
 
+identity :: Parser String
+identity = do
+    tk <- satisfy isIdent
+    case tk of
+        TK_IDENT name -> return name
+        _             -> throwParserError "Expected an identifier"
+    where
+        isIdent (TK_IDENT _) = True
+        isIdent _            = False
+
 between :: Parser open -> Parser close -> Parser a -> Parser a
 between open close p = open *> p <* close
+
+optional :: Parser a -> Parser (Maybe a)
+optional p = (Just <$> p) <|> return Nothing
 
 chainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
 chainl1 p op = do
@@ -128,7 +137,7 @@ chainl1 p op = do
 
 -- program = stmt* eof
 program :: Parser [Stmt]
-program = many stmt <* skip TK_EOF
+program = many stmt <* eof
 
 -- stmt = exprStmt
 stmt :: Parser Stmt
@@ -138,9 +147,22 @@ stmt = exprStmt
 exprStmt :: Parser Stmt
 exprStmt = ExprStmt <$> expr <* punct ";"
 
--- expr = equality
+-- expr = assign
 expr :: Parser Expr
-expr = equality
+expr = assign
+
+-- assign = equality ("=" assign)?
+assign :: Parser Expr
+assign = do
+    e <- equality
+    rest <- optional (punct "=" *> assign)
+    case e of
+        Var varName -> case rest of
+            Just e' -> return $ Assign varName e'
+            Nothing -> return e
+        _ -> case rest of
+            Just e' -> throwParserError "Left-hand side of assignment must be a variable"
+            Nothing -> return e
 
 -- equality = relational ("==" relational | "!=" relational)*
 equality :: Parser Expr
@@ -179,14 +201,18 @@ unary = (UnaryOp Neg <$> (punct "-" *> unary))
     <|> (UnaryOp Pos <$> (punct "+" *> unary))
     <|> primary
 
--- primary = "(" expr ")" | num
+-- primary = "(" expr ")" | num | ident
 primary :: Parser Expr
 primary = between (punct "(") (punct ")") expr
       <|> intLit
+      <|> ident
       <?> "expected an expression"
 
 intLit :: Parser Expr
 intLit = IntLit <$> integer
+
+ident :: Parser Expr
+ident = Var <$> identity
 
 parse :: Code -> [PosToken] -> Either CompilerError [Stmt]
 parse codes tokens = do

@@ -1,13 +1,19 @@
 module CodeGen (genCode) where
 
 import CompilerData
+import Data.Char ( ord )
 
 prologue :: String
-prologue = "  .globl main\n" ++
-           "main:\n"
+prologue = "  .globl main\n"    ++
+           "main:\n"            ++
+           "  push %rbp\n"      ++
+           "  mov %rsp, %rbp\n" ++
+           "  sub $208, %rsp\n" -- -- Allocate space for local variables
 
 epilogue :: String
-epilogue = "  ret\n"
+epilogue = "  mov %rbp, %rsp\n" ++ -- Restore stack pointer
+           "  pop %rbp\n"       ++
+           "  ret\n"
 
 push :: String
 push = "  push %rax\n"
@@ -45,9 +51,21 @@ genExpr (UnaryOp Neg e) = do
     asm <- genExpr e
     return $ asm ++ "  neg %rax\n"
 genExpr (UnaryOp Pos e) = genExpr e
+genExpr (Var name) = do
+    addr <- genAddr name
+    return $ addr ++ "  mov (%rax), %rax\n"
+genExpr (Assign name e) = do
+    asm <- genExpr e
+    addr <- genAddr name
+    return $ addr ++ push ++ asm ++ pop ++ "  mov %rax, (%rdi)\n"
 
 genStmt :: Stmt -> Either CompilerError String
 genStmt (ExprStmt expr) = genExpr expr
+
+genAddr :: String -> Either CompilerError String
+genAddr name = Right $ "  lea " ++ show (ident' name) ++ "(%rbp), %rax\n"
+    where ident' (x:_) = - ((ord x - ord 'a' + 1) * 8)
+          ident' _     = 0
 
 genCode :: [Stmt] -> Either CompilerError String
 genCode ast = do

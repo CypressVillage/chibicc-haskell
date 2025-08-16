@@ -10,6 +10,7 @@ data CompilerError = LexError String Code Position
 -- Token
 data Token 
     = TK_PUNCT String
+    | TK_IDENT String
     | TK_NUM Int
     | TK_EOF
     deriving (Show, Eq)
@@ -29,6 +30,8 @@ data Expr
     = IntLit Int
     | BinOp BinOp Expr Expr
     | UnaryOp UnaryOp Expr
+    | Var String
+    | Assign String Expr
     deriving (Show, Eq)
 
 data BinOp = Add | Sub | Mul | Div
