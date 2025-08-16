@@ -15,8 +15,8 @@ tokenize input = tokenize' 1 input where
         | isDigit x             =
             let pos = Position col (col+length num-1)
             in (PosToken (TK_NUM (read num)) pos : ) <$> tokenize' (col+length num) nnum
-        | isIdent x         =
-            let (ident, nident) = span isIdent s
+        | isIdent1 x            =
+            let (ident, nident) = span isIdent2 s
                 pos = Position col (col + length ident - 1)
             in (PosToken (TK_IDENT ident) pos : ) <$> tokenize' (col + length ident) nident
         | otherwise              =
@@ -29,5 +29,6 @@ tokenize input = tokenize' 1 input where
               splitPunct ('>':'=':n) = (">=", n)
               splitPunct ('<':'=':n) = ("<=", n)
               splitPunct (punct  :n) = ([punct], n)
-              (num, nnum)     = span isDigit s
-              isIdent         = (`elem` ['a'..'z'])
+              (num, nnum)      = span isDigit s
+              isIdent1         = (`elem` ['a'..'z'] ++ ['A'..'Z'] ++ ['_'])
+              isIdent2 c       = isIdent1 c || isDigit c

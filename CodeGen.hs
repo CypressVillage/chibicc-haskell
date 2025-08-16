@@ -3,12 +3,14 @@ module CodeGen (genCode) where
 import CompilerData
 import Data.Char ( ord )
 
+alignTo :: Int -> Int -> Int
+alignTo align n = (n + align - 1) `div` align * align
+
 prologue :: String
 prologue = "  .globl main\n"    ++
            "main:\n"            ++
            "  push %rbp\n"      ++
-           "  mov %rsp, %rbp\n" ++
-           "  sub $208, %rsp\n" -- -- Allocate space for local variables
+           "  mov %rsp, %rbp\n"
 
 epilogue :: String
 epilogue = "  mov %rbp, %rsp\n" ++ -- Restore stack pointer
@@ -20,6 +22,9 @@ push = "  push %rax\n"
 
 pop :: String
 pop = "  pop %rdi\n"
+
+stackInit :: Int -> String
+stackInit size = "  sub $" ++ show size ++ ", %rsp\n"
 
 genOp :: BinOp -> String
 genOp Add = "  add %rdi, %rax\n"
@@ -51,23 +56,23 @@ genExpr (UnaryOp Neg e) = do
     asm <- genExpr e
     return $ asm ++ "  neg %rax\n"
 genExpr (UnaryOp Pos e) = genExpr e
-genExpr (Var name) = do
-    addr <- genAddr name
+genExpr (Var var) = do
+    addr <- genAddr var
     return $ addr ++ "  mov (%rax), %rax\n"
-genExpr (Assign name e) = do
+genExpr (Assign var e) = do
     asm <- genExpr e
-    addr <- genAddr name
+    addr <- genAddr var
     return $ addr ++ push ++ asm ++ pop ++ "  mov %rax, (%rdi)\n"
 
 genStmt :: Stmt -> Either CompilerError String
 genStmt (ExprStmt expr) = genExpr expr
 
-genAddr :: String -> Either CompilerError String
-genAddr name = Right $ "  lea " ++ show (ident' name) ++ "(%rbp), %rax\n"
-    where ident' (x:_) = - ((ord x - ord 'a' + 1) * 8)
-          ident' _     = 0
+genAddr :: LocalVal -> Either CompilerError String
+genAddr (LocalVal _ off) = Right $ "  lea " ++ show (-off) ++ "(%rbp), %rax\n"
 
-genCode :: [Stmt] -> Either CompilerError String
-genCode ast = do
+genCode :: Function -> Either CompilerError String
+genCode func = do
+    let Function ast locals stackSize = func
+    let size = alignTo 16 stackSize
     asms <- mapM genStmt ast
-    return $ prologue ++ concat asms ++ epilogue
+    return $ prologue ++ stackInit size ++ concat asms ++ epilogue

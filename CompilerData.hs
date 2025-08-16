@@ -30,8 +30,8 @@ data Expr
     = IntLit Int
     | BinOp BinOp Expr Expr
     | UnaryOp UnaryOp Expr
-    | Var String
-    | Assign String Expr
+    | Var LocalVal
+    | Assign LocalVal Expr
     deriving (Show, Eq)
 
 data BinOp = Add | Sub | Mul | Div
@@ -41,5 +41,16 @@ data BinOp = Add | Sub | Mul | Div
 data UnaryOp = Neg | Pos
     deriving (Show, Eq)
 
+data LocalVal = LocalVal
+    { name :: String
+    , offset :: Int
+    } deriving (Show, Eq)
+
 data Stmt = ExprStmt Expr
     deriving (Show, Eq)
+
+data Function = Function
+    { body :: [Stmt]
+    , locals :: [LocalVal]
+    , stackSize :: Int
+    } deriving (Show)

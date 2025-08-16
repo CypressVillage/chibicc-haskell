@@ -2,15 +2,17 @@
 {-# HLINT ignore "Use lambda-case" #-}
 module Parser (parse) where
 
+import Data.List (findIndex)
 import Data.Functor (($>))
 import Control.Monad (void)
-import Control.Monad.Except (Except, ExceptT, throwError, catchError, runExceptT)
+import Control.Monad.Except
 import Control.Monad.Identity (Identity (runIdentity))
-import Control.Monad.Reader (ReaderT (runReaderT), runReaderT, ask)
+import Control.Monad.Reader
+import Control.Monad.State
 import Control.Applicative (Alternative (many), empty, (<|>))
 import CompilerData
 
-type ParserEnv a = ReaderT Code (ExceptT CompilerError Identity) a
+type ParserEnv a = ReaderT Code (ExceptT CompilerError (StateT [LocalVal] Identity)) a
 newtype Parser a = Parser { runParser :: [PosToken] -> ParserEnv (a, [PosToken]) }
 
 instance Functor Parser where
@@ -47,6 +49,17 @@ instance Alternative Parser where
     (<|>) :: Parser a -> Parser a -> Parser a
     p1 <|> p2 = Parser $ \tokens ->
         runParser p1 tokens `catchError` \_ -> runParser p2 tokens
+
+instance MonadState [LocalVal] Parser where
+    get :: Parser [LocalVal]
+    get = Parser $ \tokens -> do
+        localVals <- get
+        return (localVals, tokens)
+
+    put :: [LocalVal] -> Parser ()
+    put localVals = Parser $ \tokens -> do
+        put localVals
+        return ((), tokens)
 
 -- error handling
 throwParserError :: String -> Parser a
@@ -212,15 +225,29 @@ intLit :: Parser Expr
 intLit = IntLit <$> integer
 
 ident :: Parser Expr
-ident = Var <$> identity
+ident = do
+    name' <- identity
+    localVals <- get
+    case findIndex (\v -> name v == name') localVals of
+        Just idx -> return $ Var $ localVals !! idx
+        Nothing  -> do
+            let offset' = 8 + sum (map offset localVals)
+            let val = LocalVal name' offset'
+            put (val : localVals)
+            return $ Var val
 
-parse :: Code -> [PosToken] -> Either CompilerError [Stmt]
+parse :: Code -> [PosToken] -> Either CompilerError Function
 parse codes tokens = do
     let parseResult = 
             runIdentity $ 
+            flip runStateT [] $
             runExceptT $ 
             flip runReaderT codes $ 
             runParser program tokens
     case parseResult of
-        Right (exp, []) -> return exp
-        Left e -> Left e
+        (Right (ast, []), localVals) -> return Function
+            { body = ast
+            , locals = localVals
+            , stackSize = if null localVals then 0 else offset $ head localVals
+            }
+        (Left e, _) -> Left e
