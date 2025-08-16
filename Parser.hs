@@ -163,9 +163,11 @@ stmt = ReturnStmt <$> (keyword "return" *> expr <* punct ";")
    <|> CompoundStmt <$> (punct "{" *> many stmt <* punct "}")
    <|> exprStmt
 
--- exprStmt = expr ";"
+-- exprStmt = ";"
+--          | expr ";"
 exprStmt :: Parser Stmt
-exprStmt = ExprStmt <$> expr <* punct ";"
+exprStmt = CompoundStmt <$> (punct ";" $> [])
+       <|> ExprStmt <$> expr <* punct ";"
 
 -- expr = assign
 expr :: Parser Expr
