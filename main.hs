@@ -36,18 +36,24 @@ tokenize input = tokenize' 1 input where
     tokenize' col []             = Right [PosToken TK_EOF (Position col col)]
     tokenize' col s@(x:xs)
         | x == ' '              = tokenize' (col+1) xs
-        | x `elem` punctuators  =
+        | isPunct x             =
             let pos = Position col col
-            in (PosToken (TK_PUNCT [x]) pos : ) <$> tokenize' (col+1) xs
+            in (PosToken (TK_PUNCT punct) pos : ) <$> tokenize' (col+1) npunct
         | isDigit x             =
             let pos = Position col (col+len-1)
-            in (PosToken (TK_NUM (read num)) pos : ) <$> tokenize' (col+len) other
+            in (PosToken (TK_NUM (read num)) pos : ) <$> tokenize' (col+len) nnum
         | otherwise             =
             let pos = Position col col
             in Left $ LexError "invalid token" input pos
-        where punctuators  = "+-*/()"
-              (num, other) = span isDigit s
-              len          = length num
+        where isPunct         = (`elem` "+-*/()<>=!")
+              (punct, npunct) = splitPunct s
+              splitPunct ('=':'=':n) = ("==", n)
+              splitPunct ('!':'=':n) = ("!=", n)
+              splitPunct ('>':'=':n) = (">=", n)
+              splitPunct ('<':'=':n) = ("<=", n)
+              splitPunct (punct  :n) = ([punct], n)
+              (num, nnum)     = span isDigit s
+              len             = length num
 
 type Code = String
 type ParserEnv a = ReaderT Code (ExceptT CompilerError Identity) a
@@ -174,6 +180,7 @@ data Expr
     deriving (Show, Eq)
 
 data BinOp = Add | Sub | Mul | Div
+           | Eq | Ne | Lt | Le
     deriving (Show, Eq)
 
 data UnaryOp = Neg | Pos
@@ -185,9 +192,29 @@ program = do
     skip TK_EOF
     return ast
 
--- expr = mul ("+" mul | "-" mul)*
+-- expr = equality
 expr :: Parser Expr
-expr = chainl1 mul (addOp <|> subOp)
+expr = equality
+
+-- equality = relational ("==" relational | "!=" relational)*
+equality :: Parser Expr
+equality = chainl1 relational (eqOp <|> neOp)
+    where
+        eqOp = punct "==" $> BinOp Eq
+        neOp = punct "!=" $> BinOp Ne
+
+-- relational = add ("<" add | "<=" add | ">" add | ">=" add)*
+relational :: Parser Expr
+relational = chainl1 add (ltOp <|> leOp <|> gtOp <|> geOp)
+    where
+        ltOp = punct "<" $> BinOp Lt
+        leOp = punct "<=" $> BinOp Le
+        gtOp = punct ">" $> flip (BinOp Lt)
+        geOp = punct ">=" $> flip (BinOp Le)
+
+-- add = mul ("+" mul | "-" mul)*
+add :: Parser Expr
+add = chainl1 mul (addOp <|> subOp)
     where
         addOp = punct "+" $> BinOp Add
         subOp = punct "-" $> BinOp Sub
@@ -235,8 +262,20 @@ genExpr (BinOp op e1 e2) = do
             Add -> "  add %rdi, %rax\n"
             Sub -> "  sub %rdi, %rax\n"
             Mul -> "  imul %rdi, %rax\n"
-            Div -> "  cqo\n" ++
+            Div -> "  cqo\n"             ++
                    "  idiv %rdi\n"
+            Eq ->  "  cmp %rdi, %rax\n"  ++
+                   "  sete %al\n"        ++
+                   "  movzb %al, %rax\n"
+            Ne ->  "  cmp %rdi, %rax\n"  ++
+                   "  setne %al\n"       ++
+                   "  movzb %al, %rax\n"
+            Lt ->  "  cmp %rdi, %rax\n"  ++
+                   "  setl %al\n"        ++
+                   "  movzb %al, %rax\n"
+            Le ->  "  cmp %rdi, %rax\n"  ++
+                   "  setle %al\n"       ++
+                   "  movzb %al, %rax\n"
     return $
         asm2 ++
         push ++
