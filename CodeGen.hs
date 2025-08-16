@@ -70,6 +70,7 @@ genStmt (ExprStmt expr) = genExpr expr
 genStmt (ReturnStmt expr) = do
     asm <- genExpr expr
     return $ asm ++ "  jmp .L.return\n"
+genStmt (CompoundStmt stmts) = mconcat <$> mapM genStmt stmts
 
 genAddr :: LocalVal -> Either CompilerError String
 genAddr (LocalVal _ off) = Right $ "  lea " ++ show (-off) ++ "(%rbp), %rax\n"

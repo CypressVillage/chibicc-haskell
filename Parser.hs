@@ -156,9 +156,11 @@ program :: Parser [Stmt]
 program = many stmt <* eof
 
 -- stmt = "return" expr ";"
+--      | "{" stmt* "}"
 --      | exprStmt
 stmt :: Parser Stmt
 stmt = ReturnStmt <$> (keyword "return" *> expr <* punct ";")
+   <|> CompoundStmt <$> (punct "{" *> many stmt <* punct "}")
    <|> exprStmt
 
 -- exprStmt = expr ";"
