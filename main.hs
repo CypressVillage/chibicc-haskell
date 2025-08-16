@@ -1,86 +1,267 @@
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use lambda-case" #-}
 import System.IO ( hPutStr, stderr )
 import System.Environment ( getArgs )
 import Data.Char ( isDigit )
+import Data.Functor (($>))
+import Control.Monad (void)
+import Control.Monad.Except (Except, ExceptT, throwError, catchError, runExceptT)
+import Control.Monad.Identity (Identity (runIdentity))
+import Control.Monad.Reader (ReaderT (runReaderT), runReaderT, ask)
+import Control.Applicative (Alternative (many), empty, (<|>))
 
-data Token = TK_PUNCT String
-           | TK_NUM Int
-           | TK_EOF
-           deriving (Show)
+data CompilerError = LexError String Code Position
+                   | ParseError String Code Position
+                   deriving (Show)
+
+data Token 
+    = TK_PUNCT String
+    | TK_NUM Int
+    | TK_EOF
+    deriving (Show, Eq)
 
 data Position = Position
     { startCol :: Int
     , endCol   :: Int
     } deriving (Show)
 
-data LocatedToken = LocatedToken
+data PosToken = PosToken
     { token    :: Token
     , position :: Position
     } deriving (Show)
 
-data CompilerError = LexError String String Position
-                   | ParseError String String Position
-                   deriving (Show)
-
-main :: IO ()
-main = getArgs >>= parse >>= either handleError putStr
-    where
-        handleError (LexError msg expr pos) =
-            hPutStr stderr $ formatError msg expr pos
-        handleError (ParseError msg expr pos) =
-            hPutStr stderr $ formatError msg expr pos
-
-        formatError msg expr pos = unlines
-            [ expr
-            , replicate (startCol pos - 1) ' ' ++ "^ " ++ msg
-            ]
-
-parse :: [String] -> IO (Either CompilerError String)
-parse []    = return $ Right ""
-parse (x:_) = pure $ do
-    tokens <- tokenize x
-    asm    <- parseToken x tokens
-    return $ unlines
-        [ "  .globl main"
-        , "main:"
-        , asm
-        , "  ret"
-        ]
-
-parseOperator :: String -> Int -> String
-parseOperator p n
-    | p == "+"  = "  add $" ++ num ++ ", %rax\n"
-    | p == "-"  = "  sub $" ++ num ++ ", %rax\n"
-    where num = show n
-
-parseNum :: Int -> String
-parseNum n = "  mov $" ++ show n ++ ", %rax\n"
-
-tokenize :: String -> Either CompilerError [LocatedToken]
+tokenize :: String -> Either CompilerError [PosToken]
 tokenize input = tokenize' 1 input where
-    tokenize' :: Int -> String -> Either CompilerError [LocatedToken]
-    tokenize' col []             = Right [LocatedToken TK_EOF (Position col col)]
+    tokenize' :: Int -> String -> Either CompilerError [PosToken]
+    tokenize' col []             = Right [PosToken TK_EOF (Position col col)]
     tokenize' col s@(x:xs)
         | x == ' '              = tokenize' (col+1) xs
         | x `elem` punctuators  =
             let pos = Position col col
-            in (LocatedToken (TK_PUNCT [x]) pos : ) <$> tokenize' (col+1) xs
+            in (PosToken (TK_PUNCT [x]) pos : ) <$> tokenize' (col+1) xs
         | isDigit x             =
             let pos = Position col (col+len-1)
-            in (LocatedToken (TK_NUM (read num)) pos : ) <$> tokenize' (col+len) other
+            in (PosToken (TK_NUM (read num)) pos : ) <$> tokenize' (col+len) other
         | otherwise             =
             let pos = Position col col
             in Left $ LexError "invalid token" input pos
-        where punctuators  = "+-"
+        where punctuators  = "+-*/()"
               (num, other) = span isDigit s
               len          = length num
 
-parseToken :: String -> [LocatedToken] -> Either CompilerError String
-parseToken expr []                           = Right ""
-parseToken expr (LocatedToken (TK_PUNCT p) _   : LocatedToken (TK_NUM n) _   : xs) =
-    (parseOperator p n ++) <$> parseToken expr xs
-parseToken expr (LocatedToken (TK_PUNCT _) _   : LocatedToken  _         pos : xs) =
-    Left $ ParseError "expected a number" expr pos
-parseToken expr (LocatedToken (TK_NUM   n) _   : xs                              ) =
-    (parseNum n ++) <$> parseToken expr xs
-parseToken expr (LocatedToken  TK_EOF      _   : xs                              ) =
-    Right ""
+type Code = String
+type ParserEnv a = ReaderT Code (ExceptT CompilerError Identity) a
+newtype Parser a = Parser { runParser :: [PosToken] -> ParserEnv (a, [PosToken]) }
+
+instance Functor Parser where
+    fmap :: (a -> b) -> Parser a -> Parser b
+    fmap f (Parser p) = Parser $ \tokens -> do
+        (result, rest) <- p tokens
+        return (f result, rest)
+
+instance Applicative Parser where
+    pure :: a -> Parser a
+    pure x = Parser $ \tokens -> return (x, tokens)
+
+    (<*>) :: Parser (a -> b) -> Parser a -> Parser b
+    Parser pf <*> Parser pa = Parser $ \tokens -> do
+        (f, rest1) <- pf tokens
+        (a, rest2) <- pa rest1
+        return (f a, rest2)
+
+instance Monad Parser where
+    return :: a -> Parser a
+    return = pure
+
+    (>>=) :: Parser a -> (a -> Parser b) -> Parser b
+    Parser p >>= f = Parser $ \tokens -> do
+        (result, rest) <- p tokens
+        runParser (f result) rest
+
+instance Alternative Parser where
+    empty :: Parser a
+    empty = Parser $ \_ -> do
+        code <- ask
+        throwError $ ParseError "No valid parse" code (Position 0 0)
+
+    (<|>) :: Parser a -> Parser a -> Parser a
+    p1 <|> p2 = Parser $ \tokens ->
+        runParser p1 tokens `catchError` \_ -> runParser p2 tokens
+
+-- error handling
+throwParserError :: String -> Parser a
+throwParserError msg = Parser $ \_ -> do
+    code <- ask
+    throwError $ ParseError msg code (Position 0 0)
+
+(<?>) :: Parser a -> String -> Parser a
+p <?> msg = Parser $ \tokens -> do
+    (result, rest) <- runParser p tokens
+    return (result, rest) `catchError` \_ -> do
+        code <- ask
+        throwError $ ParseError msg code (position $ head tokens)
+
+anyToken :: Parser PosToken
+anyToken = Parser $ \tokens -> case tokens of
+    [] -> do
+        code <- ask
+        throwError $ ParseError "msg" code (Position 0 0)
+    (t:ts) -> return (t, ts)
+
+peekToken :: Parser Token
+peekToken = Parser $ \tokens -> case tokens of
+    [] -> do
+        code <- ask
+        throwError $ ParseError "msg" code (Position 0 0)
+    (t:_) -> return (token t, tokens)
+
+-- basic combinators
+satisfy :: (Token -> Bool) -> Parser Token
+satisfy predicate = do
+    t <- peekToken
+    if predicate t
+        then token <$> anyToken
+        else throwParserError "Token does not satisfy predicate"
+
+matchToken :: Token -> Parser Token
+matchToken expected = satisfy (== expected)
+
+skip :: Token -> Parser ()
+skip expected = do
+    t <- peekToken
+    if t == expected
+        then void anyToken
+        else throwParserError $ "Expected token: " ++ show expected
+
+punct :: String -> Parser ()
+punct s = do
+    tk <- satisfy isPunct
+    case tk of
+        TK_PUNCT p | p == s -> return ()
+        _                   -> throwParserError $ "Expected punctuation: " ++ s
+    where
+        isPunct (TK_PUNCT _) = True
+        isPunct _            = False
+
+integer :: Parser Int
+integer = do
+    tk <- satisfy isNum
+    case tk of
+        TK_NUM n -> return n
+        _        -> throwParserError "Expected a number"
+    where
+        isNum (TK_NUM _) = True
+        isNum _          = False
+
+between :: Parser open -> Parser close -> Parser a -> Parser a
+between open close p = open *> p <* close
+
+chainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
+chainl1 p op = do
+    x <- p
+    rest x
+    where rest x = do
+            f <- op
+            y <- p
+            rest (f x y)
+            <|> return x
+
+-- AST
+data Expr
+    = IntLit Int
+    | BinOp BinOp Expr Expr
+    deriving (Show, Eq)
+
+data BinOp = Add | Sub | Mul | Div
+    deriving (Show, Eq)
+
+program :: Parser Expr
+program = do
+    ast <- expr
+    skip TK_EOF
+    return ast
+
+-- expr = mul ("+" mul | "-" mul)*
+expr :: Parser Expr
+expr = chainl1 mul (addOp <|> subOp)
+    where
+        addOp = punct "+" $> BinOp Add
+        subOp = punct "-" $> BinOp Sub
+
+-- mul = primary ("*" primary | "/" primary)*
+mul :: Parser Expr
+mul = chainl1 primary (mulOp <|> divOp)
+    where
+        mulOp = punct "*" $> BinOp Mul
+        divOp = punct "/" $> BinOp Div
+
+-- primary = "(" expr ")" | num
+primary :: Parser Expr
+primary = between (punct "(") (punct ")") expr
+      <|> intLit
+      <?> "expected an expression"
+
+intLit :: Parser Expr
+intLit = IntLit <$> integer
+
+parse :: [PosToken] -> Code -> Either CompilerError Expr
+parse tokens codes = do
+    let parseResult = 
+            runIdentity $ 
+            runExceptT $ 
+            flip runReaderT codes $ 
+            runParser program tokens
+    case parseResult of
+        Right (exp, []) -> return exp
+        Left e -> Left e
+
+genExpr :: Expr -> Either CompilerError String
+genExpr (IntLit n) = return $ "  mov $" ++ show n ++ ", %rax\n"
+genExpr (BinOp op e1 e2) = do
+    asm1 <- genExpr e1
+    asm2 <- genExpr e2
+    let opStr = case op of
+            Add -> "  add %rdi, %rax\n"
+            Sub -> "  sub %rdi, %rax\n"
+            Mul -> "  imul %rdi, %rax\n"
+            Div -> "  cqo\n" ++
+                   "  idiv %rdi\n"
+    return $
+        asm2 ++
+        push ++
+        asm1 ++
+        pop ++
+        opStr
+
+push :: String
+push = "  push %rax\n"
+
+pop :: String
+pop = "  pop %rdi\n"
+
+main :: IO ()
+main = getArgs >>= compile >>= either handleError putStr
+
+handleError :: CompilerError -> IO ()
+handleError (LexError msg expr pos) =
+    hPutStr stderr $ formatError msg expr pos
+handleError (ParseError msg expr pos) =
+    hPutStr stderr $ formatError msg expr pos
+
+formatError :: String -> Code -> Position -> String
+formatError msg expr pos = unlines
+    [ expr
+    , replicate (startCol pos - 1) ' ' ++ "^ " ++ msg
+    ]
+
+compile :: [String] -> IO (Either CompilerError String)
+compile []    = return $ Right ""
+compile (codes:_) = return $ do
+    tokens <- tokenize codes
+    ast    <- parse tokens codes
+    asm    <- genExpr ast
+    return $
+        "  .globl main\n" ++
+        "main:\n" ++
+        asm ++
+        "  ret\n"
