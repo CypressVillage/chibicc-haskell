@@ -51,7 +51,7 @@ data Stmt = ExprStmt Expr
           | ReturnStmt Expr
           | CompoundStmt [Stmt]
           | IfStmt Expr Stmt (Maybe Stmt)
-          | ForStmt Stmt (Maybe Expr) (Maybe Expr) Stmt
+          | ForStmt (Maybe Stmt) (Maybe Expr) (Maybe Expr) Stmt
     deriving (Show, Eq)
 
 data Function = Function

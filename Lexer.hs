@@ -41,4 +41,5 @@ isKeyword "return" = True
 isKeyword "if"     = True
 isKeyword "else"   = True
 isKeyword "for"    = True
+isKeyword "while"  = True
 isKeyword _        = False

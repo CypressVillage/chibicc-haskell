@@ -93,7 +93,7 @@ genStmt (IfStmt cond thn mayEls) = do
 genStmt (ForStmt init mayCond mayInc thn) = do
     i <- get
     put $ i + 1
-    initCode <- genStmt init
+    initCode <- maybe (return "") genStmt init
     condCode <- maybe (return "") genExpr mayCond
     incCode  <- maybe (return "") genExpr mayInc
     thenCode <- genStmt thn

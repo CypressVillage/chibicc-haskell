@@ -158,12 +158,14 @@ program = many stmt <* eof
 -- stmt = "return" expr ";"
 --      | ifStmt
 --      | forStmt
+--      | whileStmt
 --      | "{" stmt* "}"
 --      | exprStmt
 stmt :: Parser Stmt
 stmt = ReturnStmt <$> (keyword "return" *> expr <* punct ";")
    <|> ifStmt
    <|> forStmt
+   <|> whileStmt
    <|> CompoundStmt <$> (punct "{" *> many stmt <* punct "}")
    <|> exprStmt
 
@@ -182,7 +184,13 @@ forStmt = do
     cond <- optional expr <* punct ";"
     inc  <- optional expr
     thn  <- punct ")" *> stmt
-    return $ ForStmt init cond inc thn
+    return $ ForStmt (Just init) cond inc thn
+
+-- whileStmt = "while" "(" expr ")" stmt
+whileStmt :: Parser Stmt
+whileStmt = do
+    cond <- keyword "while" *> punct "(" *> expr <* punct ")" 
+    ForStmt Nothing (Just cond) Nothing <$> stmt
 
 -- exprStmt = ";"
 --          | expr ";"
