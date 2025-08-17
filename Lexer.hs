@@ -40,4 +40,5 @@ isKeyword :: String -> Bool
 isKeyword "return" = True
 isKeyword "if"     = True
 isKeyword "else"   = True
+isKeyword "for"    = True
 isKeyword _        = False

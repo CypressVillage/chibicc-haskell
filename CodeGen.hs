@@ -76,12 +76,12 @@ genStmt (ReturnStmt expr) = do
     asm <- genExpr expr
     return $ asm ++ "  jmp .L.return\n"
 genStmt (CompoundStmt stmts) = mconcat <$> mapM genStmt stmts
-genStmt (IfStmt cond thn els) = do
+genStmt (IfStmt cond thn mayEls) = do
     i <- get
     put $ i + 1
     condCode <- genExpr cond
     thenCode <- genStmt thn
-    elseCode <- genStmt els
+    elseCode <- maybe (return "") genStmt mayEls
     return $ condCode                           ++
              "  cmp $0, %rax\n"                 ++
              "  je  .L.else." ++ show i ++ "\n" ++
@@ -90,6 +90,24 @@ genStmt (IfStmt cond thn els) = do
              ".L.else." ++ show i ++ ":\n"      ++
              elseCode                           ++
              ".L.end." ++ show i ++ ":\n"
+genStmt (ForStmt init mayCond mayInc thn) = do
+    i <- get
+    put $ i + 1
+    initCode <- genStmt init
+    condCode <- maybe (return "") genExpr mayCond
+    incCode  <- maybe (return "") genExpr mayInc
+    thenCode <- genStmt thn
+    return $ initCode ++ 
+             ".L.begin." ++ show i ++ ":\n"      ++
+             condCode                            ++
+             (if null condCode then "" else
+             "  cmp $0, %rax\n"                  ++
+             "  je  .L.end." ++ show i ++"\n")   ++
+             thenCode                            ++
+             incCode                             ++
+             "  jmp .L.begin." ++ show i ++ "\n" ++
+             ".L.end." ++ show i ++ ":\n"
+
 
 genAddr :: LocalVal -> CodeEnv String
 genAddr (LocalVal _ off) = return $ "  lea " ++ show (-off) ++ "(%rbp), %rax\n"
@@ -102,4 +120,4 @@ genFunction func = do
     return $ prologue ++ stackInit size ++ concat asms ++ epilogue
 
 genCode :: Function -> Either CompilerError String
-genCode func = fst $ runIdentity $ flip runStateT 0 $ runExceptT $ genFunction func
+genCode func = fst $ runIdentity $ flip runStateT 1 $ runExceptT $ genFunction func
