@@ -50,6 +50,7 @@ data LocalVal = LocalVal
 data Stmt = ExprStmt Expr
           | ReturnStmt Expr
           | CompoundStmt [Stmt]
+          | IfStmt Expr Stmt Stmt
     deriving (Show, Eq)
 
 data Function = Function

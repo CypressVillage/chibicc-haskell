@@ -18,10 +18,9 @@ tokenize input = tokenize' 1 input where
         | isIdent1 x            =
             let (ident, nident) = span isIdent2 s
                 pos = Position col (col + length ident - 1)
-            in case ident of
-                "return" ->
-                    (PosToken (TK_KEYWORD "return") pos : ) <$> tokenize' (col + length ident) nident
-                _ -> 
+            in if isKeyword ident then
+                    (PosToken (TK_KEYWORD ident) pos : ) <$> tokenize' (col + length ident) nident
+                else
                     (PosToken (TK_IDENT ident) pos : ) <$> tokenize' (col + length ident) nident
         | otherwise              =
             let pos = Position col col
@@ -36,3 +35,9 @@ tokenize input = tokenize' 1 input where
               (num, nnum)      = span isDigit s
               isIdent1         = (`elem` ['a'..'z'] ++ ['A'..'Z'] ++ ['_'])
               isIdent2 c       = isIdent1 c || isDigit c
+
+isKeyword :: String -> Bool
+isKeyword "return" = True
+isKeyword "if"     = True
+isKeyword "else"   = True
+isKeyword _        = False

@@ -1,7 +1,12 @@
 module CodeGen (genCode) where
 
-import CompilerData
 import Data.Char ( ord )
+import Control.Monad.Identity
+import Control.Monad.State
+import Control.Monad.Except
+import CompilerData
+
+type CodeEnv a = ExceptT CompilerError (StateT Int Identity) a
 
 alignTo :: Int -> Int -> Int
 alignTo align n = (n + align - 1) `div` align * align
@@ -46,7 +51,7 @@ genOp Le  = "  cmp %rdi, %rax\n"  ++
             "  setle %al\n"       ++
             "  movzb %al, %rax\n"
 
-genExpr :: Expr -> Either CompilerError String
+genExpr :: Expr -> CodeEnv String
 genExpr (IntLit n) = return $ "  mov $" ++ show n ++ ", %rax\n"
 genExpr (BinOp op e1 e2) = do
     asm1 <- genExpr e1
@@ -65,19 +70,36 @@ genExpr (Assign var e) = do
     addr <- genAddr var
     return $ addr ++ push ++ asm ++ pop ++ "  mov %rax, (%rdi)\n"
 
-genStmt :: Stmt -> Either CompilerError String
+genStmt :: Stmt -> CodeEnv String
 genStmt (ExprStmt expr) = genExpr expr
 genStmt (ReturnStmt expr) = do
     asm <- genExpr expr
     return $ asm ++ "  jmp .L.return\n"
 genStmt (CompoundStmt stmts) = mconcat <$> mapM genStmt stmts
+genStmt (IfStmt cond thn els) = do
+    i <- get
+    put $ i + 1
+    condCode <- genExpr cond
+    thenCode <- genStmt thn
+    elseCode <- genStmt els
+    return $ condCode                           ++
+             "  cmp $0, %rax\n"                 ++
+             "  je  .L.else." ++ show i ++ "\n" ++
+             thenCode                           ++
+             "  jmp .L.end." ++ show i ++ "\n"  ++
+             ".L.else." ++ show i ++ ":\n"      ++
+             elseCode                           ++
+             ".L.end." ++ show i ++ ":\n"
 
-genAddr :: LocalVal -> Either CompilerError String
-genAddr (LocalVal _ off) = Right $ "  lea " ++ show (-off) ++ "(%rbp), %rax\n"
+genAddr :: LocalVal -> CodeEnv String
+genAddr (LocalVal _ off) = return $ "  lea " ++ show (-off) ++ "(%rbp), %rax\n"
 
-genCode :: Function -> Either CompilerError String
-genCode func = do
+genFunction :: Function -> CodeEnv String
+genFunction func = do
     let Function ast locals stackSize = func
     let size = alignTo 16 stackSize
     asms <- mapM genStmt ast
     return $ prologue ++ stackInit size ++ concat asms ++ epilogue
+
+genCode :: Function -> Either CompilerError String
+genCode func = fst $ runIdentity $ flip runStateT 0 $ runExceptT $ genFunction func

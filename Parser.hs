@@ -156,12 +156,23 @@ program :: Parser [Stmt]
 program = many stmt <* eof
 
 -- stmt = "return" expr ";"
+--      | "if" "(" expr ")" stmt ("else" stmt)?
 --      | "{" stmt* "}"
 --      | exprStmt
 stmt :: Parser Stmt
 stmt = ReturnStmt <$> (keyword "return" *> expr <* punct ";")
+   <|> ifStmt
    <|> CompoundStmt <$> (punct "{" *> many stmt <* punct "}")
    <|> exprStmt
+
+ifStmt :: Parser Stmt
+ifStmt = do
+    cond <- keyword "if" *> punct "(" *> expr <* punct ")"
+    thn <- stmt
+    els <- optional $ keyword "else" *> stmt
+    case els of
+        Just el -> return $ IfStmt cond thn el
+        Nothing -> return $ IfStmt cond thn $ CompoundStmt []
 
 -- exprStmt = ";"
 --          | expr ";"
