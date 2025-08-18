@@ -107,7 +107,8 @@ skip expected = do
         else throwParserError $ "Expected token: " ++ show expected
 
 punct :: String -> Parser ()
-punct s = satisfy (== TK_PUNCT s) $> ()
+punct s = (satisfy (== TK_PUNCT s) $> ())
+      <?> ("Expected punct:" ++ s)
 
 eof :: Parser ()
 eof = skip TK_EOF
@@ -133,7 +134,8 @@ identity = do
         isIdent _            = False
 
 keyword :: String -> Parser ()
-keyword s = satisfy (== TK_KEYWORD s) $> ()
+keyword s = (satisfy (== TK_KEYWORD s) $> ())
+      <?> ("Expected keyword:" ++ s)
 
 between :: Parser open -> Parser close -> Parser a -> Parser a
 between open close p = open *> p <* close
@@ -168,6 +170,7 @@ stmt = ReturnStmt <$> (keyword "return" *> expr <* punct ";")
    <|> whileStmt
    <|> CompoundStmt <$> (punct "{" *> many stmt <* punct "}")
    <|> exprStmt
+   <?> "here should be a error"
 
 -- ifStmt = "if" "(" expr ")" stmt ("else" stmt)?
 ifStmt :: Parser Stmt
@@ -207,13 +210,7 @@ assign :: Parser Expr
 assign = do
     e <- equality
     rest <- optional (punct "=" *> assign)
-    case e of
-        Var varName -> case rest of
-            Just e' -> return $ Assign varName e'
-            Nothing -> return e
-        _ -> case rest of
-            Just e' -> throwParserError "Left-hand side of assignment must be a variable"
-            Nothing -> return e
+    return $ maybe e (Assign e) rest
 
 -- equality = relational ("==" relational | "!=" relational)*
 equality :: Parser Expr
@@ -245,11 +242,13 @@ mul = chainl1 unary (mulOp <|> divOp)
         mulOp = punct "*" $> BinOp Mul
         divOp = punct "/" $> BinOp Div
 
--- unary = ("+" | "-") unary
+-- unary = ("+" | "-" | "*" | "&") unary
 --       | primary
 unary :: Parser Expr
-unary = (UnaryOp Neg <$> (punct "-" *> unary))
-    <|> (UnaryOp Pos <$> (punct "+" *> unary))
+unary = (UnaryOp Neg   <$> (punct "-" *> unary))
+    <|> (UnaryOp Pos   <$> (punct "+" *> unary))
+    <|> (UnaryOp Addr  <$> (punct "&" *> unary))
+    <|> (UnaryOp DeRef <$> (punct "*" *> unary))
     <|> primary
 
 -- primary = "(" expr ")" | num | ident
@@ -269,7 +268,8 @@ ident = do
     case findIndex (\v -> name v == name') localVals of
         Just idx -> return $ Var $ localVals !! idx
         Nothing  -> do
-            let offset' = 8 + sum (map offset localVals)
+            let offset' = if null localVals
+                then 8 else 8 + offset (head localVals)
             let val = LocalVal name' offset'
             put (val : localVals)
             return $ Var val
@@ -283,9 +283,13 @@ parse codes tokens = do
             flip runReaderT codes $ 
             runParser program tokens
     case parseResult of
-        (Right (ast, []), localVals) -> return Function
-            { body = ast
-            , locals = localVals
-            , stackSize = if null localVals then 0 else offset $ head localVals
-            }
+        (Right (ast, []), localVals) -> do
+            let stackSize' = if null localVals then 0 else offset $ head localVals
+            return Function { body = ast
+                , locals = map (reverseOffsetBy stackSize') localVals
+                , stackSize = stackSize'
+                }
         (Left e, _) -> Left e
+
+reverseOffsetBy :: Int -> LocalVal -> LocalVal
+reverseOffsetBy stackSize (LocalVal name offset) = LocalVal name (stackSize - offset + 8)

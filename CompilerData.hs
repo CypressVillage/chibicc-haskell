@@ -32,14 +32,14 @@ data Expr
     | BinOp BinOp Expr Expr
     | UnaryOp UnaryOp Expr
     | Var LocalVal
-    | Assign LocalVal Expr
+    | Assign Expr Expr
     deriving (Show, Eq)
 
 data BinOp = Add | Sub | Mul | Div
            | Eq | Ne | Lt | Le
     deriving (Show, Eq)
 
-data UnaryOp = Neg | Pos
+data UnaryOp = Neg | Pos | Addr | DeRef
     deriving (Show, Eq)
 
 data LocalVal = LocalVal

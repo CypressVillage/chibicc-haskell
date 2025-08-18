@@ -4,9 +4,11 @@ import Data.Char ( ord )
 import Control.Monad.Identity
 import Control.Monad.State
 import Control.Monad.Except
+import Control.Monad.Reader
 import CompilerData
+import Data.List (findIndex)
 
-type CodeEnv a = ExceptT CompilerError (StateT Int Identity) a
+type CodeEnv a = ReaderT [LocalVal] (ExceptT CompilerError (StateT Int Identity)) a
 
 alignTo :: Int -> Int -> Int
 alignTo align n = (n + align - 1) `div` align * align
@@ -62,8 +64,12 @@ genExpr (UnaryOp Neg e) = do
     asm <- genExpr e
     return $ asm ++ "  neg %rax\n"
 genExpr (UnaryOp Pos e) = genExpr e
+genExpr (UnaryOp Addr var) = genAddr var
+genExpr (UnaryOp DeRef ref) = do
+    val <- genExpr ref
+    return $ val ++ "  mov (%rax), %rax\n"
 genExpr (Var var) = do
-    addr <- genAddr var
+    addr <- genAddr $ Var var
     return $ addr ++ "  mov (%rax), %rax\n"
 genExpr (Assign var e) = do
     asm <- genExpr e
@@ -109,8 +115,13 @@ genStmt (ForStmt init mayCond mayInc thn) = do
              ".L.end." ++ show i ++ ":\n"
 
 
-genAddr :: LocalVal -> CodeEnv String
-genAddr (LocalVal _ off) = return $ "  lea " ++ show (-off) ++ "(%rbp), %rax\n"
+genAddr :: Expr -> CodeEnv String
+genAddr (Var (LocalVal name' _)) = do
+    localVals <- ask
+    let off = case findIndex (\v -> name v == name') localVals of
+            Just i -> offset (localVals !! i)
+    return $ "  lea " ++ show (-off) ++ "(%rbp), %rax\n"
+genAddr (UnaryOp DeRef d) = genExpr d
 
 genFunction :: Function -> CodeEnv String
 genFunction func = do
@@ -120,4 +131,9 @@ genFunction func = do
     return $ prologue ++ stackInit size ++ concat asms ++ epilogue
 
 genCode :: Function -> Either CompilerError String
-genCode func = fst $ runIdentity $ flip runStateT 1 $ runExceptT $ genFunction func
+genCode func = fst 
+    $ runIdentity 
+    $ flip runStateT 1 
+    $ runExceptT 
+    $ flip runReaderT (locals func)
+    $ genFunction func
