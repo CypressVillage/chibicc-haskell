@@ -54,24 +54,24 @@ genOp Le  = "  cmp %rdi, %rax\n"  ++
             "  movzb %al, %rax\n"
 
 genExpr :: Expr -> CodeEnv String
-genExpr (IntLit n) = return $ "  mov $" ++ show n ++ ", %rax\n"
-genExpr (BinOp op e1 e2) = do
+genExpr (IntLit n _) = return $ "  mov $" ++ show n ++ ", %rax\n"
+genExpr (BinOp op _ e1 e2) = do
     asm1 <- genExpr e1
     asm2 <- genExpr e2
     let opStr = genOp op
     return $ asm2 ++ push ++ asm1 ++ pop ++ opStr
-genExpr (UnaryOp Neg e) = do
+genExpr (UnaryOp Neg _ e) = do
     asm <- genExpr e
     return $ asm ++ "  neg %rax\n"
-genExpr (UnaryOp Pos e) = genExpr e
-genExpr (UnaryOp Addr var) = genAddr var
-genExpr (UnaryOp DeRef ref) = do
+genExpr (UnaryOp Pos _ e) = genExpr e
+genExpr (UnaryOp Addr _ var) = genAddr var
+genExpr (UnaryOp DeRef _ ref) = do
     val <- genExpr ref
     return $ val ++ "  mov (%rax), %rax\n"
-genExpr (Var var) = do
-    addr <- genAddr $ Var var
+genExpr (Var var t) = do
+    addr <- genAddr $ Var var t
     return $ addr ++ "  mov (%rax), %rax\n"
-genExpr (Assign var e) = do
+genExpr (Assign _ var e) = do
     asm <- genExpr e
     addr <- genAddr var
     return $ addr ++ push ++ asm ++ pop ++ "  mov %rax, (%rdi)\n"
@@ -116,24 +116,23 @@ genStmt (ForStmt init mayCond mayInc thn) = do
 
 
 genAddr :: Expr -> CodeEnv String
-genAddr (Var (LocalVal name' _)) = do
+genAddr (Var (LocalVal name' _) _) = do
     localVals <- ask
     let off = case findIndex (\v -> name v == name') localVals of
             Just i -> offset (localVals !! i)
     return $ "  lea " ++ show (-off) ++ "(%rbp), %rax\n"
-genAddr (UnaryOp DeRef d) = genExpr d
+genAddr (UnaryOp DeRef _ d) = genExpr d
 
-genFunction :: Function -> CodeEnv String
-genFunction func = do
-    let Function ast locals stackSize = func
-    let size = alignTo 16 stackSize
+genFunction :: ([Stmt], [LocalVal]) -> CodeEnv String
+genFunction (ast, locals) = do
+    let size = alignTo 16 (8 * length locals)
     asms <- mapM genStmt ast
     return $ prologue ++ stackInit size ++ concat asms ++ epilogue
 
-genCode :: Function -> Either CompilerError String
-genCode func = fst 
+genCode :: ([Stmt], [LocalVal]) -> Either CompilerError String
+genCode (ast, localVal) = fst 
     $ runIdentity 
     $ flip runStateT 1 
     $ runExceptT 
-    $ flip runReaderT (locals func)
-    $ genFunction func
+    $ flip runReaderT localVal
+    $ genFunction (ast, localVal)

@@ -210,45 +210,45 @@ assign :: Parser Expr
 assign = do
     e <- equality
     rest <- optional (punct "=" *> assign)
-    return $ maybe e (Assign e) rest
+    return $ maybe e (Assign CNaN e) rest
 
 -- equality = relational ("==" relational | "!=" relational)*
 equality :: Parser Expr
 equality = chainl1 relational (eqOp <|> neOp)
     where
-        eqOp = punct "==" $> BinOp Eq
-        neOp = punct "!=" $> BinOp Ne
+        eqOp = punct "==" $> BinOp Eq CNaN
+        neOp = punct "!=" $> BinOp Ne CNaN
 
 -- relational = add ("<" add | "<=" add | ">" add | ">=" add)*
 relational :: Parser Expr
 relational = chainl1 add (ltOp <|> leOp <|> gtOp <|> geOp)
     where
-        ltOp = punct "<" $> BinOp Lt
-        leOp = punct "<=" $> BinOp Le
-        gtOp = punct ">" $> flip (BinOp Lt)
-        geOp = punct ">=" $> flip (BinOp Le)
+        ltOp = punct "<" $> BinOp Lt CNaN
+        leOp = punct "<=" $> BinOp Le CNaN
+        gtOp = punct ">" $> flip (BinOp Lt CNaN)
+        geOp = punct ">=" $> flip (BinOp Le CNaN)
 
 -- add = mul ("+" mul | "-" mul)*
 add :: Parser Expr
 add = chainl1 mul (addOp <|> subOp)
     where
-        addOp = punct "+" $> BinOp Add
-        subOp = punct "-" $> BinOp Sub
+        addOp = punct "+" $> BinOp Add CNaN
+        subOp = punct "-" $> BinOp Sub CNaN
 
 -- mul = unary ("*" unary | "/" unary)*
 mul :: Parser Expr
 mul = chainl1 unary (mulOp <|> divOp)
     where
-        mulOp = punct "*" $> BinOp Mul
-        divOp = punct "/" $> BinOp Div
+        mulOp = punct "*" $> BinOp Mul CNaN
+        divOp = punct "/" $> BinOp Div CNaN
 
 -- unary = ("+" | "-" | "*" | "&") unary
 --       | primary
 unary :: Parser Expr
-unary = (UnaryOp Neg   <$> (punct "-" *> unary))
-    <|> (UnaryOp Pos   <$> (punct "+" *> unary))
-    <|> (UnaryOp Addr  <$> (punct "&" *> unary))
-    <|> (UnaryOp DeRef <$> (punct "*" *> unary))
+unary = (UnaryOp Neg   CNaN <$> (punct "-" *> unary))
+    <|> (UnaryOp Pos   CNaN <$> (punct "+" *> unary))
+    <|> (UnaryOp Addr  CNaN <$> (punct "&" *> unary))
+    <|> (UnaryOp DeRef CNaN <$> (punct "*" *> unary))
     <|> primary
 
 -- primary = "(" expr ")" | num | ident
@@ -259,22 +259,22 @@ primary = between (punct "(") (punct ")") expr
       <?> "expected an expression"
 
 intLit :: Parser Expr
-intLit = IntLit <$> integer
+intLit = flip IntLit CNaN <$> integer
 
 ident :: Parser Expr
 ident = do
     name' <- identity
     localVals <- get
     case findIndex (\v -> name v == name') localVals of
-        Just idx -> return $ Var $ localVals !! idx
+        Just idx -> return $ flip Var CNaN $ localVals !! idx
         Nothing  -> do
             let offset' = if null localVals
                 then 8 else 8 + offset (head localVals)
             let val = LocalVal name' offset'
             put (val : localVals)
-            return $ Var val
+            return $ Var val CNaN
 
-parse :: Code -> [PosToken] -> Either CompilerError Function
+parse :: Code -> [PosToken] -> Either CompilerError ([Stmt], [LocalVal])
 parse codes tokens = do
     let parseResult = 
             runIdentity $ 
@@ -285,10 +285,7 @@ parse codes tokens = do
     case parseResult of
         (Right (ast, []), localVals) -> do
             let stackSize' = if null localVals then 0 else offset $ head localVals
-            return Function { body = ast
-                , locals = map (reverseOffsetBy stackSize') localVals
-                , stackSize = stackSize'
-                }
+            return (ast, map (reverseOffsetBy stackSize') localVals)
         (Left e, _) -> Left e
 
 reverseOffsetBy :: Int -> LocalVal -> LocalVal

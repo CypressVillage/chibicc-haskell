@@ -5,6 +5,7 @@ type Code = String
 
 data CompilerError = LexError String Code Position
                    | ParseError String Code Position
+                   | SemanticError String
                    deriving (Show)
 
 -- Token
@@ -26,13 +27,20 @@ data PosToken = PosToken
     , position :: Position
     } deriving (Show)
 
+-- Type
+data CType 
+    = CNaN
+    | CInt
+    | CPtr CType
+    deriving (Show, Eq)
+
 -- AST
-data Expr
-    = IntLit Int
-    | BinOp BinOp Expr Expr
-    | UnaryOp UnaryOp Expr
-    | Var LocalVal
-    | Assign Expr Expr
+data Expr_ a
+    = IntLit Int a
+    | BinOp BinOp a     (Expr_ a) (Expr_ a)
+    | UnaryOp UnaryOp a (Expr_ a)
+    | Var LocalVal a
+    | Assign a          (Expr_ a) (Expr_ a)
     deriving (Show, Eq)
 
 data BinOp = Add | Sub | Mul | Div
@@ -47,12 +55,16 @@ data LocalVal = LocalVal
     , offset :: Int
     } deriving (Show, Eq)
 
-data Stmt = ExprStmt Expr
-          | ReturnStmt Expr
-          | CompoundStmt [Stmt]
-          | IfStmt Expr Stmt (Maybe Stmt)
-          | ForStmt (Maybe Stmt) (Maybe Expr) (Maybe Expr) Stmt
+data Stmt_ a
+    = ExprStmt     (Expr_ a)
+    | ReturnStmt   (Expr_ a)
+    | CompoundStmt [Stmt_ a]
+    | IfStmt       (Expr_ a) (Stmt_ a) (Maybe (Stmt_ a))
+    | ForStmt      (Maybe (Stmt_ a)) (Maybe (Expr_ a)) (Maybe (Expr_ a)) (Stmt_ a)
     deriving (Show, Eq)
+
+type Expr = Expr_ CType
+type Stmt = Stmt_ CType
 
 data Function = Function
     { body :: [Stmt]
