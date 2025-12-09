@@ -1,6 +1,7 @@
 module Semantic where
 
 import CompilerData
+import Data.Generics.Uniplate.Data ( transformBiM )
 
 cType :: Expr -> CType
 cType (IntLit _ t)    = t
@@ -9,38 +10,9 @@ cType (UnaryOp _ t _) = t
 cType (Var _ t)       = t
 cType (Assign t _ _)  = t
 
-mapExpr :: Monad m => (Expr_ a -> m (Expr_ a)) -> Expr_ a -> m (Expr_ a)
-mapExpr f e@(IntLit _ _) = f e
-mapExpr f (BinOp op t e1 e2) = do
-    e1' <- mapExpr f e1
-    e2' <- mapExpr f e2
-    f (BinOp op t e1' e2')
-mapExpr f (UnaryOp u t e) = do
-    e' <- mapExpr f e
-    f (UnaryOp u t e')
-mapExpr f e@(Var _ _) = f e
-mapExpr f (Assign t e1 e2) = do
-    e1' <- mapExpr f e1
-    e2' <- mapExpr f e2
-    f (Assign t e1' e2')
-
-mapStmt :: Monad m => (Expr_ a -> m (Expr_ a)) -> Stmt_ a-> m (Stmt_ a)
-mapStmt f (ExprStmt e) = ExprStmt <$> mapExpr f e
-mapStmt f (ReturnStmt e) = ReturnStmt <$> mapExpr f e
-mapStmt f (CompoundStmt c) = do
-    c' <- mapM (mapStmt f) c
-    return $ CompoundStmt c'
-mapStmt f (IfStmt e s ms) = do
-    e' <- mapExpr f e
-    s' <- mapStmt f s
-    ms' <- traverse (mapStmt f) ms
-    return $ IfStmt e' s' ms'
-mapStmt f (ForStmt ms1 me1 me2 s) = do
-    ms1' <- traverse (mapStmt f) ms1
-    me1' <- traverse (mapExpr f) me1
-    me2' <- traverse (mapExpr f) me2
-    s' <- mapStmt f s
-    return $ ForStmt ms1' me1' me2' s'
+-- Traverse all Expr within Stmt
+mapStmtExpr :: Monad m => (Expr -> m Expr) -> Stmt -> m Stmt
+mapStmtExpr = transformBiM
 
 annotateExpr :: Expr -> Either CompilerError Expr
 annotateExpr (IntLit i _) = return $ IntLit i CInt
@@ -91,8 +63,8 @@ pointerArithmetic e = return e
 
 semantic :: ([Stmt], [LocalVal]) -> Either CompilerError ([Stmt], [LocalVal])
 semantic (stmts, l) = do
-    stmts <- mapM (mapStmt annotateExpr) stmts
-    stmts <- mapM (mapStmt pointerArithmetic) stmts
+    stmts <- mapM (mapStmtExpr annotateExpr) stmts
+    stmts <- mapM (mapStmtExpr pointerArithmetic) stmts
     return (stmts, l)
 
 showSemantic :: ([Stmt], [LocalVal]) -> Either CompilerError String

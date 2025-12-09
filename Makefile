@@ -2,7 +2,7 @@
 GHC=ghc
 
 chibicc: *.hs
-	$(GHC) -o chibicc Main.hs
+	$(GHC) -package mtl -package uniplate -o chibicc Main.hs
 
 test: chibicc
 	./test.sh

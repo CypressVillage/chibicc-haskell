@@ -157,20 +157,58 @@ chainl1 p op = do
 program :: Parser [Stmt]
 program = many stmt <* eof
 
--- stmt = "return" expr ";"
+-- stmt = declStmt
+--      | "return" expr ";"
 --      | ifStmt
 --      | forStmt
 --      | whileStmt
 --      | "{" stmt* "}"
 --      | exprStmt
 stmt :: Parser Stmt
-stmt = ReturnStmt <$> (keyword "return" *> expr <* punct ";")
+stmt = declStmt
+   <|> ReturnStmt <$> (keyword "return" *> expr <* punct ";")
    <|> ifStmt
    <|> forStmt
    <|> whileStmt
    <|> CompoundStmt <$> (punct "{" *> many stmt <* punct "}")
    <|> exprStmt
-   <?> "here should be a error"
+   <?> "expected a statement"
+
+-- declStmt = type varDecl ("," varDecl)* ";"
+declStmt :: Parser Stmt
+declStmt = do
+    baseType <- keyword "int" $> CInt
+    first <- varDecl baseType
+    rest <- many (punct "," *> varDecl baseType)
+    punct ";"
+    let decls = first : rest
+    localVals <- get
+    let newLocals = foldr (\(VarDecl ctype name' _) acc ->
+                                let offset' = if null acc
+                                        then 8 else 8 + offset (head acc)
+                                    val = LocalVal name' offset'
+                                in val : acc) localVals decls
+    put newLocals
+    return $ CompoundStmt $ flip map decls $ \(VarDecl ctype name' mInit) ->
+        case mInit of
+            Just initExpr -> ExprStmt $ Assign ctype (Var (head $ filter (\v -> name v == name') newLocals) ctype) initExpr
+            Nothing       -> ExprStmt $ IntLit 0 ctype
+
+-- varDecl = ptrs ident ("=" expr)?
+varDecl :: CType -> Parser Decl
+varDecl baseType = do
+    ptrs <- many (punct "*")
+    name' <- identity
+    mInit <- optional (punct "=" *> expr)
+    let ctype = foldr (const CPtr) baseType ptrs
+    return (VarDecl ctype name' mInit)
+
+-- typeName = "int" | typeName "*"
+typeName :: Parser CType
+typeName = do
+        keyword "int"
+        ptrs <- many (punct "*")
+        return $ foldr (const CPtr) CInt ptrs
 
 -- ifStmt = "if" "(" expr ")" stmt ("else" stmt)?
 ifStmt :: Parser Stmt

@@ -25,7 +25,7 @@ tokenize input = tokenize' 1 input where
         | otherwise              =
             let pos = Position col col
             in Left $ LexError "invalid token" input pos
-        where isPunct         = (`elem` "+-*/()<>=!;{}&")
+        where isPunct         = (`elem` "+-*/()<>=!;{}&,")
               (punct, npunct) = splitPunct s
               splitPunct ('=':'=':n) = ("==", n)
               splitPunct ('!':'=':n) = ("!=", n)
@@ -42,4 +42,5 @@ isKeyword "if"     = True
 isKeyword "else"   = True
 isKeyword "for"    = True
 isKeyword "while"  = True
+isKeyword "int"    = True
 isKeyword _        = False
