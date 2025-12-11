@@ -75,6 +75,9 @@ genExpr (Assign _ var e) = do
     asm <- genExpr e
     addr <- genAddr var
     return $ addr ++ push ++ asm ++ pop ++ "  mov %rax, (%rdi)\n"
+genExpr (Funcall name) = do
+    return $ "  mov $0, %rax\n" ++ 
+             "  call " ++ name ++ "\n"
 
 genStmt :: Stmt -> CodeEnv String
 genStmt (ExprStmt expr) = genExpr expr

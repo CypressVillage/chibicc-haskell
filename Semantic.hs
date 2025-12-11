@@ -36,6 +36,7 @@ annotateExpr (Assign _ e1 e2) = do
     e1' <- annotateExpr e1
     e2' <- annotateExpr e2
     return $ Assign (cType e1') e1' e2'
+annotateExpr f@(Funcall _) = return f
 
 pointerArithmetic :: Expr -> Either CompilerError Expr
 pointerArithmetic (BinOp Add t a b) = do

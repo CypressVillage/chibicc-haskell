@@ -289,10 +289,11 @@ unary = (UnaryOp Neg   CNaN <$> (punct "-" *> unary))
     <|> (UnaryOp DeRef CNaN <$> (punct "*" *> unary))
     <|> primary
 
--- primary = "(" expr ")" | num | ident
+-- primary = "(" expr ")" | num | funcall | ident
 primary :: Parser Expr
 primary = between (punct "(") (punct ")") expr
       <|> intLit
+      <|> funcall
       <|> ident
       <?> "expected an expression"
 
@@ -311,6 +312,11 @@ ident = do
             let val = LocalVal name' offset'
             put (val : localVals)
             return $ Var val CNaN
+
+funcall :: Parser Expr
+funcall = do
+    name <- identity <* punct "(" <* punct ")"
+    return $ Funcall name
 
 parse :: Code -> [PosToken] -> Either CompilerError ([Stmt], [LocalVal])
 parse codes tokens = do
