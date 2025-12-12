@@ -45,7 +45,7 @@ data Expr
     | UnaryOp UnaryOp  CType Expr
     | Var     LocalVal CType
     | Assign           CType Expr Expr
-    | Funcall Name
+    | FunCall CType Name [Expr]
     deriving (Show, Eq, Data, Typeable)
 
 data BinOp = Add | Sub | Mul | Div

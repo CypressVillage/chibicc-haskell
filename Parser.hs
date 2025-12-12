@@ -143,6 +143,9 @@ between open close p = open *> p <* close
 optional :: Parser a -> Parser (Maybe a)
 optional p = (Just <$> p) <|> return Nothing
 
+sepBy :: Parser a -> Parser sep -> Parser [a]
+sepBy p sep = (:) <$> p <*> many (sep *> p) <|> return []
+
 chainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
 chainl1 p op = do
     x <- p
@@ -315,8 +318,9 @@ ident = do
 
 funcall :: Parser Expr
 funcall = do
-    name <- identity <* punct "(" <* punct ")"
-    return $ Funcall name
+    name <- identity <* punct "(" 
+    args <- expr `sepBy` punct "," <* punct ")"
+    return $ FunCall CNaN name args
 
 parse :: Code -> [PosToken] -> Either CompilerError ([Stmt], [LocalVal])
 parse codes tokens = do

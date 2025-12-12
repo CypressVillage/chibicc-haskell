@@ -22,14 +22,14 @@ prologue = "  .globl main\n"    ++
 epilogue :: String
 epilogue = ".L.return:\n"       ++
            "  mov %rbp, %rsp\n" ++ -- Restore stack pointer
-           "  pop %rbp\n"       ++
+           pop "rbp"            ++
            "  ret\n"
 
 push :: String
 push = "  push %rax\n"
 
-pop :: String
-pop = "  pop %rdi\n"
+pop :: String -> String
+pop reg = "  pop %" ++ reg ++ "\n"
 
 stackInit :: Int -> String
 stackInit size = "  sub $" ++ show size ++ ", %rsp\n"
@@ -59,7 +59,7 @@ genExpr (BinOp op _ e1 e2) = do
     asm1 <- genExpr e1
     asm2 <- genExpr e2
     let opStr = genOp op
-    return $ asm2 ++ push ++ asm1 ++ pop ++ opStr
+    return $ asm2 ++ push ++ asm1 ++ pop "rdi" ++ opStr
 genExpr (UnaryOp Neg _ e) = do
     asm <- genExpr e
     return $ asm ++ "  neg %rax\n"
@@ -74,10 +74,21 @@ genExpr (Var var t) = do
 genExpr (Assign _ var e) = do
     asm <- genExpr e
     addr <- genAddr var
-    return $ addr ++ push ++ asm ++ pop ++ "  mov %rax, (%rdi)\n"
-genExpr (Funcall name) = do
-    return $ "  mov $0, %rax\n" ++ 
+    return $ addr ++ push ++ asm ++ pop "rdi" ++ "  mov %rax, (%rdi)\n"
+genExpr (FunCall _ name args) = do
+    argAsms <- mapM genExpr (reverse args)
+    let pushArgs = concatMap (++ push) argAsms
+    let popArgs = concatMap (pop . regName) [0..length args - 1]
+    return $ pushArgs ++ popArgs ++
              "  call " ++ name ++ "\n"
+  where
+    regName 0 = "rdi"
+    regName 1 = "rsi"
+    regName 2 = "rdx"
+    regName 3 = "rcx"
+    regName 4 = "r8"
+    regName 5 = "r9"
+    regName _ = error "Too many function arguments"
 
 genStmt :: Stmt -> CodeEnv String
 genStmt (ExprStmt expr) = genExpr expr
