@@ -8,21 +8,27 @@ import Control.Monad.Reader
 import CompilerData
 import Data.List (findIndex)
 
-type CodeEnv a = ReaderT [LocalVal] (ExceptT CompilerError (StateT Int Identity)) a
+type CodeEnv a = ReaderT (String, [LocalVal]) (ExceptT CompilerError (StateT Int Identity)) a
 
 alignTo :: Int -> Int -> Int
 alignTo align n = (n + align - 1) `div` align * align
 
-prologue :: String
-prologue = "  .globl main\n"    ++
-           "main:\n"            ++
-           "  push %rbp\n"      ++
-           "  mov %rsp, %rbp\n"
+prologue :: CodeEnv String
+prologue = do
+    (fnName, locals) <- ask
+    let stkSize = show $ alignTo 16 (8 * length locals)
+    return $ "  .globl " ++ fnName ++ "\n"    ++
+           fnName ++ ":\n"                    ++
+           "  push %rbp\n"                    ++
+           "  mov %rsp, %rbp\n"               ++
+           "  sub $" ++ stkSize ++ ", %rsp\n"    -- Allocate stack space
 
-epilogue :: String
-epilogue = ".L.return:\n"       ++
-           "  mov %rbp, %rsp\n" ++ -- Restore stack pointer
-           pop "rbp"            ++
+epilogue :: CodeEnv String
+epilogue = do
+    fnName <- asks fst
+    return $ ".L.return." ++ fnName ++ ":\n" ++
+           "  mov %rbp, %rsp\n"              ++ -- Restore stack pointer
+           pop "rbp"                         ++
            "  ret\n"
 
 push :: String
@@ -30,9 +36,6 @@ push = "  push %rax\n"
 
 pop :: String -> String
 pop reg = "  pop %" ++ reg ++ "\n"
-
-stackInit :: Int -> String
-stackInit size = "  sub $" ++ show size ++ ", %rsp\n"
 
 genOp :: BinOp -> String
 genOp Add = "  add %rdi, %rax\n"
@@ -76,11 +79,12 @@ genExpr (Assign _ var e) = do
     addr <- genAddr var
     return $ addr ++ push ++ asm ++ pop "rdi" ++ "  mov %rax, (%rdi)\n"
 genExpr (FunCall _ name args) = do
-    argAsms <- mapM genExpr (reverse args)
+    argAsms <- mapM genExpr args
     let pushArgs = concatMap (++ push) argAsms
-    let popArgs = concatMap (pop . regName) [0..length args - 1]
+    let popArgs = concatMap (pop . regName) (reverse [0..length args - 1])
     return $ pushArgs ++ popArgs ++
-             "  call " ++ name ++ "\n"
+            "  mov $0, %rax\n" ++
+            "  call " ++ name ++ "\n"
   where
     regName 0 = "rdi"
     regName 1 = "rsi"
@@ -93,8 +97,9 @@ genExpr (FunCall _ name args) = do
 genStmt :: Stmt -> CodeEnv String
 genStmt (ExprStmt expr) = genExpr expr
 genStmt (ReturnStmt expr) = do
+    fnName <- asks fst
     asm <- genExpr expr
-    return $ asm ++ "  jmp .L.return\n"
+    return $ asm ++ "  jmp .L.return." ++ fnName ++ "\n"
 genStmt (CompoundStmt stmts) = mconcat <$> mapM genStmt stmts
 genStmt (IfStmt cond thn mayEls) = do
     i <- get
@@ -117,7 +122,7 @@ genStmt (ForStmt init mayCond mayInc thn) = do
     condCode <- maybe (return "") genExpr mayCond
     incCode  <- maybe (return "") genExpr mayInc
     thenCode <- genStmt thn
-    return $ initCode ++ 
+    return $ initCode ++
              ".L.begin." ++ show i ++ ":\n"      ++
              condCode                            ++
              (if null condCode then "" else
@@ -131,22 +136,30 @@ genStmt (ForStmt init mayCond mayInc thn) = do
 
 genAddr :: Expr -> CodeEnv String
 genAddr (Var (LocalVal name' _) _) = do
-    localVals <- ask
+    localVals <- asks snd
     let off = case findIndex (\v -> name v == name') localVals of
             Just i -> offset (localVals !! i)
     return $ "  lea " ++ show (-off) ++ "(%rbp), %rax\n"
 genAddr (UnaryOp DeRef _ d) = genExpr d
 
-genFunction :: ([Stmt], [LocalVal]) -> CodeEnv String
-genFunction (ast, locals) = do
-    let size = alignTo 16 (8 * length locals)
-    asms <- mapM genStmt ast
-    return $ prologue ++ stackInit size ++ concat asms ++ epilogue
+genFunction :: Function -> CodeEnv String
+genFunction (Function rtnT fnName fnBody locals) = do
+    localVals <- asks snd
+    let newLocalVals = localVals ++ locals
+    asms <- local (const (fnName, newLocalVals)) $ mconcat <$> mapM genStmt fnBody
+    prologueCode <- local (const (fnName, locals)) prologue
+    epilogueCode <- local (const (fnName, locals)) epilogue
+    return $ prologueCode ++ asms ++ epilogueCode
 
-genCode :: ([Stmt], [LocalVal]) -> Either CompilerError String
-genCode (ast, localVal) = fst 
-    $ runIdentity 
-    $ flip runStateT 1 
-    $ runExceptT 
-    $ flip runReaderT localVal
-    $ genFunction (ast, localVal)
+genCFile :: CFile -> CodeEnv String
+genCFile (CFile funcs) = do
+    funcAsms <- mapM genFunction funcs
+    return $ concat funcAsms
+
+genCode :: CFile -> Either CompilerError String
+genCode cfile = fst
+    $ runIdentity
+    $ flip runStateT 1
+    $ runExceptT
+    $ flip runReaderT ("", [])
+    $ genCFile cfile

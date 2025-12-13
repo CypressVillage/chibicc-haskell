@@ -69,12 +69,16 @@ data Stmt
     deriving (Show, Eq, Data, Typeable)
 
 data Function = Function
-    { body :: [Stmt]
+    { rtnType :: CType
+    , funcName :: Name
+    , body :: [Stmt]
     , locals :: [LocalVal]
-    , stackSize :: Int
     } deriving (Show)
 
 type Name = String
 
 data Decl
     = VarDecl CType Name (Maybe Expr)
+
+newtype CFile = CFile [Function]
+    deriving (Show)

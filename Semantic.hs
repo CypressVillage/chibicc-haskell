@@ -62,11 +62,16 @@ pointerArithmetic (BinOp op t a b) = return $ BinOp op t a b
 pointerArithmetic (UnaryOp op t e) = return $ UnaryOp op t e
 pointerArithmetic e = return e
 
-semantic :: ([Stmt], [LocalVal]) -> Either CompilerError ([Stmt], [LocalVal])
-semantic (stmts, l) = do
-    stmts <- mapM (mapStmtExpr annotateExpr) stmts
-    stmts <- mapM (mapStmtExpr pointerArithmetic) stmts
-    return (stmts, l)
+semantic :: CFile -> Either CompilerError CFile
+semantic (CFile funcs) = do
+    funcs' <- mapM processFunction funcs
+    return $ CFile funcs'
+  where
+    processFunction :: Function -> Either CompilerError Function
+    processFunction f = do
+        stmts1 <- mapM (mapStmtExpr annotateExpr) (body f)
+        stmts2 <- mapM (mapStmtExpr pointerArithmetic) stmts1
+        return f { body = stmts2 }
 
-showSemantic :: ([Stmt], [LocalVal]) -> Either CompilerError String
-showSemantic (stmts, _) = return $ unlines $ map show stmts
+showSemantic :: CFile -> Either CompilerError String
+showSemantic (CFile stmts) = return $ unlines $ map show stmts

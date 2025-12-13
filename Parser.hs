@@ -156,9 +156,33 @@ chainl1 p op = do
             rest (f x y)
             <|> return x
 
--- program = stmt* eof
-program :: Parser [Stmt]
-program = many stmt <* eof
+-- program = cfile
+program :: Parser CFile
+program = cfile
+
+-- cfile = funcDef* eof
+cfile:: Parser CFile
+cfile = CFile <$> many funcDef <* eof
+
+funcDef :: Parser Function
+funcDef = do
+    bsType <- baseType
+    name <- identity
+    punct "(" *> punct ")" *> punct "{"
+
+    oldLocals <- get
+    put []
+
+    stmts <- many stmt
+    punct "}"
+
+    localVals <- get
+    put oldLocals
+
+    let stackSize = if null localVals then 0 else offset $ head localVals
+    let localVals' = map (reverseOffsetBy stackSize) localVals
+
+    return $ Function bsType name stmts localVals'
 
 -- stmt = declStmt
 --      | "return" expr ";"
@@ -180,9 +204,9 @@ stmt = declStmt
 -- declStmt = type varDecl ("," varDecl)* ";"
 declStmt :: Parser Stmt
 declStmt = do
-    baseType <- keyword "int" $> CInt
-    first <- varDecl baseType
-    rest <- many (punct "," *> varDecl baseType)
+    bsType <- baseType
+    first <- varDecl bsType
+    rest <- many (punct "," *> varDecl bsType)
     punct ";"
     let decls = first : rest
     localVals <- get
@@ -192,19 +216,21 @@ declStmt = do
                                     val = LocalVal name' offset'
                                 in val : acc) localVals decls
     put newLocals
-    return $ CompoundStmt $ flip map decls $ \(VarDecl ctype name' mInit) ->
-        case mInit of
-            Just initExpr -> ExprStmt $ Assign ctype (Var (head $ filter (\v -> name v == name') newLocals) ctype) initExpr
-            Nothing       -> ExprStmt $ IntLit 0 ctype
+    return $ CompoundStmt $ 
+        [ExprStmt $ Assign ctype (Var (head $ filter (\v -> name v == name') newLocals) ctype) initExpr
+            | VarDecl ctype name' (Just initExpr) <- decls]
 
 -- varDecl = ptrs ident ("=" expr)?
 varDecl :: CType -> Parser Decl
-varDecl baseType = do
+varDecl bsType = do
     ptrs <- many (punct "*")
     name' <- identity
     mInit <- optional (punct "=" *> expr)
-    let ctype = foldr (const CPtr) baseType ptrs
+    let ctype = foldr (const CPtr) bsType ptrs
     return (VarDecl ctype name' mInit)
+
+baseType :: Parser CType
+baseType = keyword "int" $> CInt
 
 -- typeName = "int" | typeName "*"
 typeName :: Parser CType
@@ -322,7 +348,7 @@ funcall = do
     args <- expr `sepBy` punct "," <* punct ")"
     return $ FunCall CNaN name args
 
-parse :: Code -> [PosToken] -> Either CompilerError ([Stmt], [LocalVal])
+parse :: Code -> [PosToken] -> Either CompilerError CFile
 parse codes tokens = do
     let parseResult = 
             runIdentity $ 
@@ -331,10 +357,8 @@ parse codes tokens = do
             flip runReaderT codes $ 
             runParser program tokens
     case parseResult of
-        (Right (ast, []), localVals) -> do
-            let stackSize' = if null localVals then 0 else offset $ head localVals
-            return (ast, map (reverseOffsetBy stackSize') localVals)
-        (Left e, _) -> Left e
+        (Right (cfile, []), _) -> Right cfile
+        (Left err, _)    -> Left err
 
 reverseOffsetBy :: Int -> LocalVal -> LocalVal
 reverseOffsetBy stackSize (LocalVal name offset) = LocalVal name (stackSize - offset + 8)
